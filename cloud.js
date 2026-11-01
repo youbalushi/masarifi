@@ -34,7 +34,7 @@
     if (/INVALID_EMAIL/.test(m)) return 'الإيميل مو صحيح';
     if (/TOO_MANY_ATTEMPTS/.test(m)) return 'محاولات كثيرة، جرّب بعد شوي';
     if (/USER_DISABLED/.test(m)) return 'هالحساب موقوف';
-    if (/OPERATION_NOT_ALLOWED|CONFIGURATION_NOT_FOUND|ADMIN_ONLY_OPERATION/.test(m)) return 'مشاركة الرحلات تحتاج تفعيل الدخول المجهول في Firebase (Authentication ← Anonymous)';
+    if (/OPERATION_NOT_ALLOWED|CONFIGURATION_NOT_FOUND|ADMIN_ONLY_OPERATION/.test(m)) return 'لازم يتفعّل الدخول المجهول في Firebase (Authentication ← Sign-in method ← Anonymous)';
     if (/PERMISSION_DENIED|Missing or insufficient permissions/i.test(m)) return 'ما عندك صلاحية. تأكد من قواعد Firestore';
     if (/NOT_FOUND|database .* does not exist/i.test(m)) return 'قاعدة البيانات مو موجودة. سوّها من Firestore';
     return '';
