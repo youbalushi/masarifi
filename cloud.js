@@ -223,46 +223,63 @@
   // ---------- رسائل البنك في الآيفون (اختصار يرسلها لصندوق خاص) ----------
   var IOS = !!window.__IOS;
   function rnd(n) { var a = 'abcdefghjkmnpqrstuvwxyz23456789', r = new Uint8Array(n), o = ''; try { crypto.getRandomValues(r); } catch (e) { for (var i = 0; i < n; i++) r[i] = Math.floor(Math.random() * 256); } for (var j = 0; j < n; j++) o += a[r[j] % a.length]; return o; }
-  function inboxUrl(tok) { return DOCS + '/inbox/' + tok + '/msgs?key=' + API_KEY; }
+  // صندوق الرسائل في Realtime Database: الاختصار يرسل حقل واحد بس {"t": نص الرسالة}
+  var RTDB = 'https://masarifi-83d78-default-rtdb.firebaseio.com';
+  function inboxUrl(tok) { return RTDB + '/inbox/' + tok + '.json'; }
+  function rtErr(r, def) {
+    var b = (r && r.body) || '';
+    if (r && r.status === 0) return 'ما فيه اتصال بالإنترنت';
+    if (/Permission denied/i.test(b) || (r && r.status === 401)) return 'ما عندي صلاحية. تأكد إنك نشرت قواعد Realtime Database';
+    if ((r && r.status === 404) || /ensure that you have the URL|does not exist/i.test(b)) return 'قاعدة Realtime Database مو موجودة. سوّها في Firebase واختر موقعها United States';
+    return def + (r && r.status ? ' (' + r.status + ')' : '');
+  }
+  function rtReq(method, path, body, tok) {
+    return call('httpRequest', method, RTDB + path + (tok ? '?auth=' + encodeURIComponent(tok) : ''), JSON.stringify({ 'content-type': 'application/json' }), body == null ? '' : JSON.stringify(body)).then(function (r) {
+      if (!r) throw { text: 'هذي تشتغل في التطبيق' };
+      if (r.status !== 200) throw { text: rtErr(r, 'صار خطأ') , status: r.status };
+      try { return r.body ? JSON.parse(r.body) : null; } catch (e) { return null; }
+    });
+  }
   P.iosSetup = function () {
     var self = this, st = this.state;
-    var tok = (st.iosInbox && st.iosInbox.token) || rnd(24);
+    var tok = (st.iosBox && st.iosBox.token) || rnd(24);
     this.setState({ iosBusy: true });
-    token().then(function () {
-      return fsCommit([upd('inbox/' + tok, { owner: uid(), created: Date.now() })]);
+    token().then(function (t) {
+      return rtReq('PUT', '/owners/' + tok + '.json', uid(), t);
     }).then(function () {
-      self.setState({ iosInbox: { token: tok, ready: true, uid: uid() }, iosBusy: false });
-      self.say('تجهز الرابط. انسخه وكمّل خطوات الاختصار');
+      self.setState({ iosBox: { token: tok, ready: true, uid: uid() }, iosBusy: false });
+      self.say('تجهز الرابط. جرّب رسالة، وبعدها انسخ الرابط للاختصار');
     }).catch(function (e) { self.setState({ iosBusy: false }); self.say((e && e.text) || 'ما قدرت أجهز الرابط، تأكد من الإنترنت'); });
   };
   P.iosCopy = function () {
-    var ib = this.state.iosInbox;
+    var ib = this.state.iosBox;
     if (!ib || !ib.ready) return;
     var u = inboxUrl(ib.token), self = this;
     try { navigator.clipboard.writeText(u).then(function () { self.say('انسخ الرابط'); }, function () { self.say('ما قدرت أنسخ، اضغط على الرابط مطوّل وانسخه'); }); } catch (e) { this.say('اضغط على الرابط مطوّل وانسخه'); }
   };
-  // تجربة: يرسل رسالة بنك تجريبية بنفس طريقة الاختصار
+  // تجربة: يرسل رسالة بنك تجريبية بنفس طريقة الاختصار بالضبط
   P.iosTest = function () {
-    var ib = this.state.iosInbox, self = this;
+    var ib = this.state.iosBox, self = this;
     if (!ib || !ib.ready) return;
-    var body = { fields: { text: { stringValue: 'رسالة تجريبية من مصاريفي: تم خصم 1.500 OMR لدى CAFE TEST' } } };
-    fetch(inboxUrl(ib.token), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) {
-      if (r.status === 200) { self.say('انرسلت رسالة تجريبية، بتطلع في الرئيسية'); setTimeout(function () { self.iosPull(); }, 800); }
-      else self.say('ما وصلت. تأكد إنك نشرت قواعد Firestore الجديدة (' + r.status + ')');
-    }).catch(function () { self.say('ما فيه اتصال بالإنترنت'); });
+    call('httpRequest', 'POST', inboxUrl(ib.token), JSON.stringify({ 'content-type': 'application/json' }), JSON.stringify({ t: 'رسالة تجريبية من مصاريفي: تم خصم 1.500 OMR من بطاقتك XXXX0000 لدى CAFE TEST' })).then(function (r) {
+      if (r && r.status === 200) { self.say('انرسلت رسالة تجريبية، بتطلع في الرئيسية'); setTimeout(function () { self.iosPull(); }, 800); }
+      else self.say(rtErr(r, 'ما وصلت الرسالة'));
+    });
   };
   P.iosPull = function () {
-    var self = this, ib = this.state.iosInbox;
+    var self = this, ib = this.state.iosBox;
     if (!IOS || !ib || !ib.ready || this.iosPulling) return Promise.resolve();
     if (this.state.screen === 'onboard' || this.state.locked) return Promise.resolve();
     this.iosPulling = true;
-    return fsGet('inbox/' + ib.token + '/msgs?pageSize=50').then(function (j) {
-      var docs = (j && j.documents) || [];
-      if (!docs.length) return;
-      docs.sort(function (a, b) { return String(a.createTime).localeCompare(String(b.createTime)); });
-      docs.forEach(function (d) { var o = docOf(d); if (o.text) window.__iosQueue.push({ body: String(o.text), sender: 'ios' }); });
+    var tk;
+    return token().then(function (t) { tk = t; return rtReq('GET', '/inbox/' + ib.token + '.json', null, t); }).then(function (o) {
+      var keys = o ? Object.keys(o).sort() : [];
+      if (!keys.length) return;
+      keys.forEach(function (k) { var m = o[k]; var txt = m && (typeof m === 'string' ? m : m.t); if (txt) window.__iosQueue.push({ body: String(txt), sender: 'ios' }); });
       self.drainSms();
-      return fsCommit(docs.map(function (d) { return { delete: d.name }; }));
+      var del = {};
+      keys.forEach(function (k) { del[k] = null; });
+      return rtReq('PATCH', '/inbox/' + ib.token + '.json', del, tk);
     }).catch(function () {}).then(function () { self.iosPulling = false; });
   };
 
@@ -278,9 +295,9 @@
 
   // تسجيل الخروج وحذف البيانات يمسحون الرحلات المشتركة بعد
   var origSignOut = P.signOut;
-  P.signOut = function () { var keep = IOS ? { anon: this.state.anon, iosInbox: this.state.iosInbox } : {}; this.setState({ anon: null, cTrips: [], cTripItems: {}, ctrip: null, joinCode: '' }); origSignOut.call(this); if (IOS) this.setState(keep); };
+  P.signOut = function () { var keep = IOS ? { anon: this.state.anon, iosBox: this.state.iosBox } : {}; this.setState({ anon: null, cTrips: [], cTripItems: {}, ctrip: null, joinCode: '' }); origSignOut.call(this); if (IOS) this.setState(keep); };
   var origDel = P.deleteAll;
-  P.deleteAll = function () { var keep = IOS ? { anon: this.state.anon, iosInbox: this.state.iosInbox } : null; if (this.state.delText.trim() === this.tt().deleteWord) this.setState({ anon: null, cTrips: [], cTripItems: {}, ctrip: null, joinCode: '' }); origDel.call(this); if (keep) this.setState(keep); };
+  P.deleteAll = function () { var keep = IOS ? { anon: this.state.anon, iosBox: this.state.iosBox } : null; if (this.state.delText.trim() === this.tt().deleteWord) this.setState({ anon: null, cTrips: [], cTripItems: {}, ctrip: null, joinCode: '' }); origDel.call(this); if (keep) this.setState(keep); };
 
   // ---------- ربط بدورة حياة التطبيق ----------
   var origMount = P.componentDidMount;
@@ -321,7 +338,7 @@
     var chip = function (on) { return { cbg: on ? 'var(--soft)' : 'var(--surface)', cfg: on ? 'var(--accentText)' : 'var(--ink2)', cbd: on ? 'var(--accent)' : 'var(--line)' }; };
     var trips = st.cTrips || [];
     v.td = Object.assign({}, v.td || {}, { hasMembers: false });
-    var ib = st.iosInbox;
+    var ib = st.iosBox;
     v.ios = {
       ready: !!(ib && ib.ready), notReady: !(ib && ib.ready), busy: !!st.iosBusy,
       url: ib && ib.ready ? inboxUrl(ib.token) : '',

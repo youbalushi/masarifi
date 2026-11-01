@@ -2,7 +2,7 @@
 (function () {
   var A = window.Android || null;
   var SAVE_KEY = 'masarifi_data_v1';
-  var EXTRA_KEYS = ['tourDone', 'hideAmt', 'obDone', 'aiKey', 'aiModel', 'notifAsked', 'fxRates', 'fxDate', 'anon', 'cTrips', 'iosInbox'];
+  var EXTRA_KEYS = ['tourDone', 'hideAmt', 'obDone', 'aiKey', 'aiModel', 'notifAsked', 'fxRates', 'fxDate', 'anon', 'cTrips', 'iosBox'];
   var P = Component.prototype;
   var comp = null;
 
