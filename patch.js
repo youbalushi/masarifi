@@ -389,6 +389,7 @@
       var self = this;
       items.forEach(function (it) {
         if (it.action === 'ignore') return;
+        if (it.sender !== 'share' && !hasAccOrCard(it.body)) return;
         var before = self.idc;
         self.arrive(it.body);
         var p = self.state.pending.find(function (x) { return x.id >= before; })

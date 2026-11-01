@@ -347,6 +347,15 @@ function accDigitsOf(text) {
   const ad = { raw, head: (raw.match(/^(\d+)/) || ['', ''])[1], tail: (raw.match(/(\d+)$/) || ['', ''])[1] };
   return ad.head || ad.tail ? ad : null;
 }
+// رسالة بنك فعلية: فيها رقم حساب أو بطاقة (الفواتير وتنبيهات الشركات ما فيها)
+function hasAccOrCard(text) {
+  if (accDigitsOf(text)) return true;
+  const re = /(?:بطاقتك|بطاقتكم|البطاقة|بطاقة|card)(?:\s*(?:رقم|no\.?|number|ending(?:\s+(?:with|in))?))?\s*[:#]?\s*([0-9Xx#*•]*\d[0-9Xx#*•]*)(?![.,]\d)/gi;
+  const s = (text || '').replace(/\s+/g, ' ');
+  let r;
+  while ((r = re.exec(s))) { if (r[1].length >= 4 && r[1].replace(/\D/g, '').length >= 2) return true; }
+  return false;
+}
 // كل المفاتيح الممكنة لرقم الحساب (أول ٤ وآخر ٤)
 function accKeysOf(ad) {
   if (!ad) return [];
@@ -604,8 +613,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.0';
-const APP_BUILD = '12';
+const APP_VERSION = '1.7.1';
+const APP_BUILD = '13';
 
 function makeInitialState() {
   const now0 = new Date();
