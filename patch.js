@@ -627,6 +627,28 @@
         now: function () { self.backupNowNative(); }, nowLabel: st.bkBusy ? 'أحفظ…' : 'انسخ الحين'
       };
       if (st.fxDate === new Date().toISOString().slice(0, 10) && v.tfCurLabel) v.tfCurLabel += ' · سعر اليوم';
+      // فحص رسائل البنك والإشعارات
+      var dg = null;
+      if (st.screen === 'settings' && ok('diag') && !IOS && !LITE) { try { dg = JSON.parse(A.diag()); } catch (e) { dg = null; } }
+      if (dg) {
+        var WHAT = { notbank: ['ما سجلتها', 'مو رسالة بنك، أو ما فيها رقم حساب أو بطاقة', '#8A8F8C'], ignored: ['تجاهلتها', 'من حساب اخترت تتجاهله', '#8A8F8C'], muted: ['ما سجلتها', 'قراءة رسائل هالحساب موقفة من صفحته', '#A85A2C'], inapp: ['وصلت', 'كان التطبيق مفتوح، فطلعت داخله بدون إشعار', '#23624D'], notified: ['وصلت + إشعار', 'انحطت للموافقة وطلع إشعار', '#23624D'], unknown: ['وصلت + إشعار', 'من حساب مو مسجل، سألتك تضيفه', '#23624D'], notifoff: ['وصلت بدون إشعار', 'انحطت للموافقة، بس الإشعارات مقفلة', '#9C2F3D'] };
+        var chk = function (okv, label, sub, fix, fixLabel) { return { ok: !!okv, bad: !okv, label: label, sub: sub, mark: okv ? '✓' : '!', markBg: okv ? '#DCEFE6' : '#F8E1E3', markC: okv ? '#23624D' : '#9C2F3D', fix: fix || function () {}, fixLabel: fixLabel || '' }; };
+        var refresh = function () { self.__forceRender && self.__forceRender(); };
+        v.dg = {
+          show: true,
+          checks: [
+            chk(dg.sms, 'صلاحية قراءة الرسائل', dg.sms ? 'مسموحة' : 'مقفلة، فما أقدر أشوف رسائل البنك', function () { self.askPerm('sms'); setTimeout(refresh, 1500); }, 'اسمح'),
+            chk(dg.notif, 'إشعارات التطبيق', dg.notif ? 'مفعّلة' : 'مقفلة، فالرسائل توصل بدون إشعار', function () { A.openNotifSettings(); }, 'افتح الإعدادات'),
+            chk(dg.channel, 'قناة "رسائل البنك"', dg.channel ? 'مفعّلة' : 'مقفلة من إعدادات إشعارات الجوال', function () { A.openNotifSettings(); }, 'افتح الإعدادات'),
+            chk(dg.battery, 'البطارية بدون قيود', dg.battery ? 'الجوال ما يوقف التطبيق' : 'الجوال ممكن يوقف التطبيق بالخلفية ويمنع الرسائل' + (/samsung/i.test(dg.maker) ? '. في سامسونج بعد: الإعدادات ← البطارية ← حدود الاستخدام بالخلفية، وتأكد إن مصاريفي مو في التطبيقات النائمة' : ''), function () { A.openBattery(); }, 'شيل القيود')
+          ],
+          log: (dg.log || []).map(function (x) { var w = WHAT[x.what] || [x.what, '', '#8A8F8C']; var d = new Date(x.ts); return { title: w[0], why: w[1], c: w[2], when: d.getDate() + ' ' + AR_M[d.getMonth()] + ' ' + (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() + (x.from ? ' · ' + x.from : ''), text: x.text || '' }; }),
+          noLog: !(dg.log || []).length,
+          test: function () { var r = A.testNotif(); self.say(r ? 'أرسلت إشعار تجريبي، لازم يطلع فوق' : 'ما قدرت أطلع إشعار، الإشعارات مقفلة'); },
+          refresh: function () { refresh(); self.say('تحدّث الفحص'); },
+          clear: function () { A.clearSmsLog(); refresh(); }
+        };
+      } else v.dg = { show: false, checks: [], log: [] };
       v.isApp = true; v.notApp = false; v.isIos = IOS; v.notIos = !IOS; v.isAndroid = !IOS;
       v.receiptCat = 'الفئة: ' + this.catAr(RECEIPT.catId || 'grocery') + ' · تقدر تغيّرها بعد الحفظ';
       // روابط "عن التطبيق"

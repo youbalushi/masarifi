@@ -371,9 +371,10 @@ function ignoredHit(list, ad) {
 function accHit(d, ad) {
   d = String(d || '');
   if (!ad || d.length < 2) return false;
-  if (ad.tail.length >= 4 && ad.tail.slice(-4) === d) return true;
-  if (ad.head.length >= 4 && ad.head.slice(0, 4) === d) return true;
-  if (ad.tail.length >= 2 && ad.tail.length < 4 && d.slice(-ad.tail.length) === ad.tail) return true;
+  // آخر ٤ أرقام تميّز الحساب؛ أول ٤ تتكرر بين حسابات نفس البنك، فنستخدمها بس إذا ما فيه آخر ٤
+  if (ad.tail.length >= 4) return ad.tail.slice(-4) === d;
+  if (ad.tail.length >= 2) return d.slice(-ad.tail.length) === ad.tail;
+  if (ad.head.length >= 4) return ad.head.slice(0, 4) === d;
   return false;
 }
 function parseSms(text, learned, accounts) {
@@ -613,8 +614,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.1';
-const APP_BUILD = '13';
+const APP_VERSION = '1.7.3';
+const APP_BUILD = '15';
 
 function makeInitialState() {
   const now0 = new Date();
