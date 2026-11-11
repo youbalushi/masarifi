@@ -429,9 +429,9 @@
       if (!ok('setAccounts')) return;
       var st = this.state;
       var o = {
-        accs: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch !== false; }).map(function (a) { return String(a.last4); }),
-        muted: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch === false; }).map(function (a) { return String(a.last4); }),
-        ignored: [].concat.apply([], (st.ignoredAccs || []).map(function (g) { return [String(g.digits)].concat(g.alts || []); }))
+        accs: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch !== false; }).map(function (a) { return a.sig ? 'S:' + a.sig : String(a.last4); }),
+        muted: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch === false; }).map(function (a) { return a.sig ? 'S:' + a.sig : String(a.last4); }),
+        ignored: [].concat.apply([], (st.ignoredAccs || []).map(function (g) { return g.sig ? ['S:' + g.sig] : [String(g.digits)].concat(g.alts || []); }))
       };
       var sig = JSON.stringify(o);
       if (sig === this.lastAccSig) return;

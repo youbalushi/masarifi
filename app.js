@@ -364,8 +364,19 @@ function accKeysOf(ad) {
   if (ad.head.length >= 4) k.push(ad.head.slice(0, 4));
   return k.filter((v, i, a) => a.indexOf(v) === i);
 }
+// بصمة الرقم كما يظهر في الرسالة (مثل 70102*01): تفرّق بين حسابات نفس البنك اللي ما يبين منها آخر ٤
+function accSig(ad) { return ad ? ad.head + '*' + ad.tail : ''; }
+function accAmb(ad) { return !!ad && ad.tail.length < 4; }
 function ignoredHit(list, ad) {
-  return (list || []).some((g) => accHit(g.digits, ad) || (g.alts || []).some((d) => accHit(d, ad)));
+  const sig = accSig(ad);
+  if ((list || []).some((g) => g.sig && g.sig === sig)) return true;
+  return (list || []).some((g) => !g.sig && (accHit(g.digits, ad) || (g.alts || []).some((d) => accHit(d, ad))));
+}
+// الحساب المسجل اللي تخصه الرسالة: البصمة أول، وبعدها الأرقام الأربعة
+function accOfMsg(accounts, ad) {
+  if (!ad) return null;
+  const sig = accSig(ad), list = (accounts || []).filter((x) => x.type !== 'cash');
+  return list.find((x) => x.sig && x.sig === sig) || list.find((x) => !x.sig && accHit(x.last4, ad)) || null;
 }
 // يطابق ٤ أرقام الحساب مع بداية أو نهاية الرقم في الرسالة
 function accHit(d, ad) {
@@ -373,8 +384,8 @@ function accHit(d, ad) {
   if (!ad || d.length < 2) return false;
   // آخر ٤ أرقام تميّز الحساب؛ أول ٤ تتكرر بين حسابات نفس البنك، فنستخدمها بس إذا ما فيه آخر ٤
   if (ad.tail.length >= 4) return ad.tail.slice(-4) === d;
-  if (ad.tail.length >= 2) return d.slice(-ad.tail.length) === ad.tail;
   if (ad.head.length >= 4) return ad.head.slice(0, 4) === d;
+  if (ad.tail.length >= 2) return d.slice(-ad.tail.length) === ad.tail;
   return false;
 }
 function parseSms(text, learned, accounts) {
@@ -383,8 +394,9 @@ function parseSms(text, learned, accounts) {
   const ad = accDigitsOf(text);
   p.accDigits = ad;
   if (ad) {
-    const a = (accounts || []).find((x) => x.type !== 'cash' && accHit(x.last4, ad));
-    p.newKey = ad.tail.length >= 4 ? ad.tail.slice(-4) : (ad.head.length >= 4 ? ad.head.slice(0, 4) : (p.last4 || ad.tail || ad.head));
+    const a = accOfMsg(accounts, ad);
+    p.accSig = accSig(ad); p.accAmb = accAmb(ad); p.accId = a ? a.id : null;
+    p.newKey = ad.tail.length >= 4 ? ad.tail.slice(-4) : (ad.head.length >= 1 ? ad.head + '••' + ad.tail : (p.last4 || ad.tail));
     if (a) p.last4 = a.last4; else if (p.newKey) p.last4 = p.newKey;
   }
   return p;
@@ -614,8 +626,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.3';
-const APP_BUILD = '15';
+const APP_VERSION = '1.7.4';
+const APP_BUILD = '16';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -947,7 +959,7 @@ class Component extends DCLogic {
     if (typeof textArg === 'string') st.smsText = textArg;
     const p = parseSms(st.smsText, st.learned, st.accounts);
     if (!p || !p.ok) return;
-    if (p.accDigits && !st.accounts.some((a) => a.type !== 'cash' && accHit(a.last4, p.accDigits))) {
+    if (p.accDigits && !p.accId) {
       if (ignoredHit(st.ignoredAccs, p.accDigits)) { this.setState({ smsText: '' }); return; }
       const key = p.newKey;
       const ex = st.pending.find((x) => x.kind === 'newacc' && x.accKey === key);
@@ -958,7 +970,7 @@ class Component extends DCLogic {
         return np0;
       }
       const nid = this.newId();
-      const nitem = { id: nid, kind: 'newacc', accKey: key, bank: p.bank || '', balance: p.balance, texts: [st.smsText], count: 1, amount: p.amount, dateShort: p.dateShort, merchant: p.merchant || '', credit: p.kind === 'credit' || p.kind === 'salary' };
+      const nitem = { id: nid, kind: 'newacc', accKey: key, accSig: p.accAmb ? p.accSig : '', bank: p.bank || '', balance: p.balance, texts: [st.smsText], count: 1, amount: p.amount, dateShort: p.dateShort, merchant: p.merchant || '', credit: p.kind === 'credit' || p.kind === 'salary' };
       const np1 = [nitem].concat(st.pending);
       this.setState({ pending: np1, smsText: '' });
       if (this.state.perms.sms !== 'granted') this.setState({ screen: 'home' });
@@ -1017,6 +1029,7 @@ class Component extends DCLogic {
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
     const acc = { id: this.newId(), bank: p.bank || 'حساب جديد', type: 'acc', last4: p.accKey, balance: p.balance || 0, watch: true };
+    if (p.accSig) acc.sig = p.accSig;
     const base = { accounts: st.accounts.concat([acc]), pending: st.pending.filter((x) => x.id !== pid) };
     this.setState(base);
     p.texts.forEach((t) => { const r = this.arrive(t, base); if (r) base.pending = r; });
@@ -1027,10 +1040,12 @@ class Component extends DCLogic {
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
     const alts = [];
-    (p.texts || []).forEach((t) => accKeysOf(accDigitsOf(t)).forEach((k) => { if (k !== p.accKey && alts.indexOf(k) === -1) alts.push(k); }));
+    if (!p.accSig) (p.texts || []).forEach((t) => accKeysOf(accDigitsOf(t)).forEach((k) => { if (k !== p.accKey && alts.indexOf(k) === -1) alts.push(k); }));
     // أي عملية ثانية من نفس الحساب تنتظر (خصم أو إيداع) تنشال بعد
     const rest = st.pending.filter((x) => x.id !== pid && !(x.last4 && (x.last4 === p.accKey || alts.indexOf(x.last4) !== -1) && !st.accounts.some((a) => accMatch(a, x.last4))));
-    this.setState({ ignoredAccs: (st.ignoredAccs || []).concat([{ digits: p.accKey, alts, bank: p.bank || '' }]), pending: rest });
+    const ig = { digits: p.accKey, alts, bank: p.bank || '' };
+    if (p.accSig) ig.sig = p.accSig;
+    this.setState({ ignoredAccs: (st.ignoredAccs || []).concat([ig]), pending: rest });
     this.say('تمام، ما بسجل أي رسالة من حساب •••• ' + p.accKey);
   }
   unignoreAcc(d) {
