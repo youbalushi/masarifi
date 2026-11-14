@@ -348,7 +348,9 @@ function accDigitsOf(text) {
   return ad.head || ad.tail ? ad : null;
 }
 // رسالة بنك فعلية: فيها رقم حساب أو بطاقة (الفواتير وتنبيهات الشركات ما فيها)
+const OTP_RE = /\bOTP\b|one[\s-]*time\s*pass|verification\s*code|رمز\s*(?:التحقق|التفعيل|سري)|كلمة\s*(?:المرور|السر)\s*(?:لمرة|المؤقتة)/i;
 function hasAccOrCard(text) {
+  if (OTP_RE.test(text || '')) return false;
   if (accDigitsOf(text)) return true;
   const re = /(?:بطاقتك|بطاقتكم|البطاقة|بطاقة|card)(?:\s*(?:رقم|no\.?|number|ending(?:\s+(?:with|in))?))?\s*[:#]?\s*([0-9Xx#*•]*\d[0-9Xx#*•]*)(?![.,]\d)/gi;
   const s = (text || '').replace(/\s+/g, ' ');
@@ -637,8 +639,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.7';
-const APP_BUILD = '19';
+const APP_VERSION = '1.7.8';
+const APP_BUILD = '20';
 
 function makeInitialState() {
   const now0 = new Date();
