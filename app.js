@@ -245,6 +245,22 @@ function normName(n) { return String(n || '').toLowerCase().replace(/[\u064B-\u0
 function subNameHit(a, b) { const x = normName(a), y = normName(String(b || '').split(' · ')[0]); if (x.length < 3 || y.length < 3) return x === y && !!x; return x.indexOf(y) !== -1 || y.indexOf(x) !== -1; }
 function subTxHit(sub, t) { return !t.trip && (t.subId === sub.id || subNameHit(sub.name, t.merchant)); }
 function addPeriod(ts, p) { const d = new Date(ts); if (p === 'y') d.setFullYear(d.getFullYear() + 1); else { const day = d.getDate(); d.setMonth(d.getMonth() + 1, 1); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); } return d.getTime(); }
+// ===== أهداف الادخار =====
+function r3(n) { return Math.round((Number(n) || 0) * 1000) / 1000; }
+function goalLeft(g) { return Math.max(0, r3(g.target - (g.saved || 0))); }
+function monthsTo(iso) { const p = String(iso || '').split('-').map(Number); if (p.length !== 3 || !p[0]) return 0; const n = new Date(); return Math.max(1, (p[0] - n.getFullYear()) * 12 + (p[1] - 1 - n.getMonth()) + (p[2] > n.getDate() ? 0 : 0)); }
+function goalEta(g) { const left = goalLeft(g); if (left <= 0) return 0; return g.monthly > 0 ? Math.ceil(left / g.monthly - 1e-9) : 0; }
+// يربط المبلغ المجموع للهدف بالحساب كمبلغ محجوز (يقل من الرصيد المتاح)
+function goalHeldSync(accounts, g, gone) {
+  return accounts.map((a) => {
+    const had = (a.held || []).some((h) => h.goalId === g.id);
+    const want = !gone && !g.doneAt && g.accId === a.id && (g.saved || 0) > 0;
+    if (!had && !want) return a;
+    let held = (a.held || []).filter((h) => h.goalId !== g.id);
+    if (want) held = held.concat([{ id: 'g' + g.id, goalId: g.id, title: 'هدف: ' + g.name, amount: r3(g.saved), ts: g.ts || Date.now() }]);
+    return Object.assign({}, a, { held });
+  });
+}
 function heldOf(a) { return (a && a.held || []).reduce((s, h) => s + (Number(h.amount) || 0), 0); }
 function availOf(a) { return a.type === 'card' ? a.balance : Math.round((a.balance - heldOf(a)) * 1000) / 1000; }
 function accLabel(a) { return a.type === 'cash' ? 'محفظة النقد' : (a.name || bankOf(a.bank).ar) + (a.last4 ? ' •••• ' + a.last4 : ''); }
@@ -639,8 +655,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.8';
-const APP_BUILD = '20';
+const APP_VERSION = '1.8.0';
+const APP_BUILD = '21';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -656,7 +672,7 @@ function makeInitialState() {
     cycle: 1, cycleStart: new Date(now0.getFullYear(), now0.getMonth(), 1).getTime(), cycleStartLabel: '1 ' + AR_M[now0.getMonth()], cycleSalary: false, cycles: [],
     chat: [{ role: 'assistant', text: 'هلا، أنا مستشارك المالي.\nأتابع أرصدتك ومصاريفك وأقساطك، وأنبهك من نفسي إذا شفت شي يضر ميزانيتك.\nاسألني أي شي: أرتب لك ميزانية، أو أسوي لك خطة للتخلص من الديون، أو أوريك وين تقدر توفر.' }],
     chatInput: '', chatBusy: false, unread: 0, nudge: '', expanded: null, savingsOffer: null, aiReady: false,
-    heads: null, shadeOpen: false, advNotes: [], budgets: {}, goals: [],
+    heads: null, shadeOpen: false, advNotes: [], budgets: {}, goals: [], gf: null, gAmt: '', goalAsk: null, goalLogAsk: null,
     profile: { name: '', email: '' }, pf: { name: '', email: '' }, lang: 'ar',
     cats: DEFAULT_CATS.map((c) => Object.assign({}, c)),
     notif: { sms: true, advisor: true, inst: true },
@@ -797,6 +813,7 @@ class Component extends DCLogic {
   }
   checkDueInst() {
     try { this.syncSubs(); } catch (e) {}
+    try { this.checkDueGoals(); } catch (e) {}
     const st = this.state;
     if (!st.installments || !st.installments.length) return;
     const now = Date.now();
@@ -922,6 +939,201 @@ class Component extends DCLogic {
     if (returned && h && (a.type === 'cash' || !a.watch)) patch.balance = Math.round((a.balance - h.amount) * 1000) / 1000;
     this.setState({ accounts: st.accounts.map((x) => (x.id === accId ? Object.assign({}, x, patch) : x)), heldAsk: null });
     this.say(returned ? (a.type === 'cash' || !a.watch ? 'تمام، رجع المبلغ لصاحبه وانخصم من الرصيد' : 'تمام، شلته من المعزولة. والرصيد يتحدث من رسالة البنك') : 'تمام، صار المبلغ من رصيدك');
+  }
+  // ===== أهداف الادخار =====
+  openGoalForm(id) {
+    const g = id ? this.state.goals.find((x) => x.id === id) : null;
+    const accs = this.state.accounts.filter((a) => a.type !== 'card');
+    const def = accs.find((a) => a.type === 'savings') || accs[0];
+    this.setState({ modal: { type: 'goalForm' }, gf: g
+      ? { id: g.id, name: g.name, target: String(g.target), mode: g.due ? 'd' : 'm', monthly: String(g.monthly || ''), due: g.due || '', accId: g.accId || null, auto: !!g.autoDay, autoDate: g.nextDue ? isoOf(g.nextDue) : '' }
+      : { id: null, name: '', target: '', mode: 'm', monthly: '', due: '', accId: def ? def.id : null, auto: false, autoDate: '' } });
+  }
+  goalFormCalc(f, saved) {
+    const target = parseFloat(f.target), left = Math.max(0, r3(target - (saved || 0)));
+    if (!(target > 0)) return null;
+    if (f.mode === 'd') { const n = monthsTo(f.due); if (!n) return null; return { monthly: r3(Math.ceil(left / n * 1000) / 1000), months: n }; }
+    const m = parseFloat(f.monthly); if (!(m > 0)) return null;
+    return { monthly: r3(m), months: Math.ceil(left / m - 1e-9) };
+  }
+  saveGoal() {
+    const st = this.state, f = st.gf || {};
+    if (!(f.name || '').trim()) { this.say('اكتب اسم الهدف'); return; }
+    const target = parseFloat(f.target);
+    if (!(target > 0)) { this.say('اكتب المبلغ اللي تبي توصل له'); return; }
+    if (f.mode === 'd' && !monthsTo(f.due)) { this.say('حدد التاريخ اللي تبي توصل فيه'); return; }
+    if (f.mode !== 'd' && !(parseFloat(f.monthly) > 0)) { this.say('اكتب كم تحجز كل شهر'); return; }
+    const old = f.id ? st.goals.find((x) => x.id === f.id) : null;
+    const c = this.goalFormCalc(f, old ? old.saved : 0);
+    const fd = f.auto ? firstDue(f.autoDate) : null;
+    if (f.auto && !fd) { this.say('حدد تاريخ الحجز الشهري'); return; }
+    const g = Object.assign({ id: this.newId(), saved: 0, log: [], ts: Date.now() }, old || {}, {
+      name: f.name.trim().slice(0, 40), target: r3(target), monthly: c.monthly, due: f.mode === 'd' ? f.due : null,
+      accId: f.accId || null, autoDay: fd ? fd.day : null, nextDue: fd ? fd.ts : null });
+    if (g.saved >= g.target - 0.0005 && !g.reachedAt) g.reachedAt = Date.now();
+    if (g.saved < g.target - 0.0005) g.reachedAt = null;
+    if (old && old.accId !== g.accId && g.saved > 0) {
+      const na = st.accounts.find((a) => a.id === g.accId);
+      if (na && g.saved > availOf(na) + heldOf({ held: (na.held || []).filter((h) => h.goalId === g.id) }) + 0.0005) { this.say('رصيد الحساب الجديد ما يكفي للمبلغ اللي جمعته'); return; }
+    }
+    const goals = old ? st.goals.map((x) => (x.id === g.id ? g : x)) : st.goals.concat([g]);
+    this.setState({ goals, accounts: goalHeldSync(st.accounts, g), modal: old ? { type: 'goal', id: g.id } : null, gf: null });
+    this.say(old ? 'تعدّل الهدف' : 'انضاف هدف ' + g.name + '. ' + (fd ? 'بينحجز ' + fmt(g.monthly) + ' ⃄ تلقائي كل شهر يوم ' + fd.day : 'احجز له ' + fmt(g.monthly) + ' ⃄ كل شهر'));
+    this.timers.push(setTimeout(() => this.checkDueGoals(), 300));
+  }
+  goalMove(id, amount, how, silent, when) {
+    const st = this.state, g = st.goals.find((x) => x.id === id);
+    if (!g) return false;
+    let amt = r3(amount);
+    if (!(amt !== 0)) { if (!silent) this.say('اكتب المبلغ'); return false; }
+    if (amt > 0) {
+      const left = goalLeft(g);
+      if (left <= 0) { if (!silent) this.say('الهدف مكتمل'); return false; }
+      amt = Math.min(amt, left);
+      const a = st.accounts.find((x) => x.id === g.accId);
+      if (a && amt > availOf(a) + 0.0005) { if (!silent) this.say('رصيدك المتاح في ' + accLabel(a) + ' ما يكفي'); return false; }
+    } else if (-amt > (g.saved || 0) + 0.0005) { if (!silent) this.say('ما جمعت هالمبلغ في الهدف'); return false; }
+    const saved = r3((g.saved || 0) + amt);
+    const ng = Object.assign({}, g, { saved, log: [{ id: this.newId(), amt, ts: when || Date.now(), how }].concat(g.log || []) });
+    const reached = saved >= g.target - 0.0005;
+    if (reached && !g.reachedAt) ng.reachedAt = Date.now();
+    if (!reached) ng.reachedAt = null;
+    this.setState({ goals: this.state.goals.map((x) => (x.id === id ? ng : x)), accounts: goalHeldSync(this.state.accounts, ng), gAmt: '' });
+    if (!silent) this.say(reached && !g.reachedAt ? 'وصلت لهدف ' + g.name + ' 🎉' : (amt > 0 ? 'انحجز ' + fmt(amt) + ' ⃄ لهدف ' + g.name : 'سحبت ' + fmt(-amt) + ' ⃄ من هدف ' + g.name));
+    return true;
+  }
+  delGoalLog(id, logId) {
+    const g = this.state.goals.find((x) => x.id === id);
+    if (!g) return;
+    const e = (g.log || []).find((x) => x.id === logId);
+    if (!e) return;
+    const saved = Math.max(0, r3((g.saved || 0) - e.amt));
+    const ng = Object.assign({}, g, { saved, log: g.log.filter((x) => x.id !== logId), reachedAt: saved >= g.target - 0.0005 ? g.reachedAt : null });
+    this.setState({ goals: this.state.goals.map((x) => (x.id === id ? ng : x)), accounts: goalHeldSync(this.state.accounts, ng), goalLogAsk: null });
+    this.say('انحذفت الحركة من سجل الهدف');
+  }
+  goalDone(id) {
+    const g = this.state.goals.find((x) => x.id === id);
+    if (!g) return;
+    const ng = Object.assign({}, g, { doneAt: Date.now(), autoDay: null, nextDue: null });
+    this.setState({ goals: this.state.goals.map((x) => (x.id === id ? ng : x)), accounts: goalHeldSync(this.state.accounts, ng), modal: null });
+    const a = this.state.accounts.find((x) => x.id === g.accId);
+    this.say('مبروك! انفك حجز ' + fmt(g.saved) + ' ⃄. ' + (a && a.watch && a.type !== 'cash' ? 'الشراء بينسجل من رسالة البنك أول ما تدفع' : 'سجّل الشراء من زر الإضافة'));
+  }
+  deleteGoal(id) {
+    const g = this.state.goals.find((x) => x.id === id);
+    if (!g) return;
+    this.setState({ goals: this.state.goals.filter((x) => x.id !== id), accounts: goalHeldSync(this.state.accounts, g, true), modal: null, goalAsk: null });
+    this.say(g.saved > 0 && !g.doneAt ? 'انحذف الهدف ورجع ' + fmt(g.saved) + ' ⃄ لرصيدك المتاح' : 'انحذف الهدف');
+  }
+  toggleGoalAuto(id) {
+    const g = this.state.goals.find((x) => x.id === id);
+    if (!g) return;
+    if (g.autoDay) { this.setState({ goals: this.state.goals.map((x) => (x.id === id ? Object.assign({}, x, { autoDay: null, nextDue: null }) : x)) }); this.say('صار الحجز يدوي'); return; }
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    this.setGoalDue(id, isoOf(d.getTime()));
+  }
+  setGoalDue(id, iso) {
+    const fd = firstDue(iso);
+    if (!fd) return;
+    this.setState({ goals: this.state.goals.map((x) => (x.id === id ? Object.assign({}, x, { autoDay: fd.day, nextDue: fd.ts }) : x)) });
+    this.say('بينحجز تلقائي كل شهر يوم ' + fd.day + '، وأول مرة ' + dueLabel(fd.ts));
+  }
+  // الحجز الشهري التلقائي لما يجي موعده
+  checkDueGoals() {
+    const now = Date.now(), done = [], short = [];
+    (this.state.goals || []).forEach((g0) => {
+      if (!g0.autoDay || !g0.nextDue || g0.doneAt || g0.nextDue > now) return;
+      let guard = 0;
+      while (guard++ < 24) {
+        const g = this.state.goals.find((x) => x.id === g0.id);
+        if (!g || !g.nextDue || g.nextDue > now) break;
+        const next = nextDueAfter(g.nextDue, g.autoDay);
+        if (goalLeft(g) > 0) {
+          const ok = this.goalMove(g.id, Math.min(g.monthly, goalLeft(g)), 'auto', true, g.nextDue);
+          if (ok) done.push(g.name); else short.push(g.name);
+        }
+        this.setState({ goals: this.state.goals.map((x) => (x.id === g.id ? Object.assign({}, x, { nextDue: next }) : x)) });
+      }
+    });
+    if (done.length) this.say(done.length === 1 ? 'انحجز قسط هدف ' + done[0] + ' في موعده' : 'انحجزت ' + done.length + ' أقساط لأهدافك');
+    else if (short.length) this.say('ما قدرت أحجز لهدف ' + short[0] + '، الرصيد المتاح ما يكفي');
+  }
+  goalViews() {
+    const st = this.state, goals = st.goals || [];
+    const sw = (on) => ({ aria: on ? 'true' : 'false', bg: on ? 'var(--accent)' : 'var(--off)', x: knobX(on, 20) });
+    const accName = (id) => { const a = st.accounts.find((x) => x.id === id); return a ? accLabel(a) : ''; };
+    const active = goals.filter((g) => !g.doneAt), done = goals.filter((g) => g.doneAt);
+    const subOf = (g) => {
+      const left = goalLeft(g), eta = goalEta(g);
+      if (left <= 0) return { t: 'اكتمل 🎉 اضغط وسجّل إنك اشتريته', c: '#23624D' };
+      if (g.due) { const n = monthsTo(g.due); const behind = g.monthly > 0 && eta > n; return { t: 'باقي ' + fmt(left) + ' ⃄ · ' + (behind ? 'متأخر عن موعدك' : 'توصل في موعدك'), c: behind ? '#9C2F3D' : 'var(--muted)' }; }
+      return { t: 'باقي ' + fmt(left) + ' ⃄ · توصل خلال ' + monthsAr(eta), c: 'var(--muted)' };
+    };
+    const goalsList = active.map((g) => {
+      const pct = Math.min(100, Math.round((g.saved || 0) / g.target * 100)), sb = subOf(g);
+      return { name: g.name, pct, dash: pct + ' 100', ring: pct >= 100 ? '#2E7D5B' : '#2F7A8C', saved: fmt(g.saved || 0), target: fmt(g.target), sub: sb.t, subC: sb.c,
+        open: () => this.setState({ modal: { type: 'goal', id: g.id }, gAmt: '', goalAsk: null, goalLogAsk: null }) };
+    });
+    const goalsSavedN = active.reduce((s, g) => s + (g.saved || 0), 0);
+    // نافذة تفاصيل الهدف
+    let gvw = { rows: [], hist: [], autoSw: sw(false) };
+    const og = st.modal && st.modal.type === 'goal' ? goals.find((x) => x.id === st.modal.id) : null;
+    if (og) {
+      const left = goalLeft(og), reached = left <= 0, pct = Math.min(100, (og.saved || 0) / og.target * 100), eta = goalEta(og);
+      const rows = [{ k: 'تحجز كل شهر', v: fmt(og.monthly) + ' ⃄' }];
+      if (og.due) rows.push({ k: 'تبي توصل قبل', v: dueLabel(new Date(og.due + 'T09:00').getTime()) + ' ' + new Date(og.due + 'T09:00').getFullYear() });
+      if (!reached && eta) { const d = new Date(); d.setMonth(d.getMonth() + eta); rows.push({ k: 'توصل تقريباً', v: AR_M[d.getMonth()] + ' ' + d.getFullYear() }); }
+      rows.push({ k: 'الفلوس محجوزة في', v: accName(og.accId) || 'بدون حجز (متابعة بس)' });
+      const howAr = { in: 'حطيتها بيدك', out: 'سحبت منها', auto: 'حجز تلقائي شهري' };
+      gvw = {
+        name: og.name, sub: 'الهدف ' + fmt(og.target) + ' ⃄', pct: pct.toFixed(1), bar: reached ? '#2E7D5B' : '#2F7A8C',
+        saved: fmt(og.saved || 0), left: fmt(left), target: fmt(og.target), rows, reached, notReached: !reached,
+        amt: st.gAmt, onAmt: (e) => this.setState({ gAmt: e.target.value.replace(/[^0-9.]/g, '') }),
+        hint: 'المقترح ' + fmt(Math.min(og.monthly, left)) + ' ⃄',
+        put: () => this.goalMove(og.id, parseFloat(st.gAmt) || Math.min(og.monthly, left), 'in'),
+        take: () => { const v = parseFloat(st.gAmt); if (!(v > 0)) { this.say('اكتب المبلغ اللي سحبته'); return; } this.goalMove(og.id, -v, 'out'); },
+        canTake: (og.saved || 0) > 0,
+        bought: () => this.goalDone(og.id),
+        doneNote: og.accId ? 'لما تضغط "اشتريته" ينفك الحجز عن ' + fmt(og.saved) + ' ⃄ في ' + accName(og.accId) + '، وينتقل الهدف لأهداف حققتها.' : 'لما تضغط "اشتريته" ينتقل الهدف لأهداف حققتها.',
+        autoSw: sw(!!og.autoDay), autoOn: !!og.autoDay, toggleAuto: () => this.toggleGoalAuto(og.id),
+        autoSub: og.autoDay ? 'بينحجز ' + fmt(Math.min(og.monthly, left)) + ' ⃄ تلقائي يوم ' + dueLabel(og.nextDue) : 'إذا فعّلته، ينحجز القسط تلقائي كل شهر في التاريخ اللي تحدده',
+        dueVal: og.nextDue ? isoOf(og.nextDue) : '', onDue: (e) => this.setGoalDue(og.id, e.target.value),
+        hist: (og.log || []).map((e) => ({ date: dueLabel(e.ts) + ' ' + new Date(e.ts).getFullYear(), how: howAr[e.how] || '', amt: fmt(Math.abs(e.amt)), dot: e.amt < 0 ? '#9C2F3D' : '#2F7A8C',
+          canDel: st.goalLogAsk !== e.id, asking: st.goalLogAsk === e.id,
+          ask: () => this.setState({ goalLogAsk: e.id }), cancel: () => this.setState({ goalLogAsk: null }), del: () => this.delGoalLog(og.id, e.id) })),
+        noHist: !(og.log || []).length,
+        edit: () => this.openGoalForm(og.id),
+        delAsk: !st.goalAsk, asking: !!st.goalAsk, askDel: () => this.setState({ goalAsk: og.id }), cancelDel: () => this.setState({ goalAsk: null }), del: () => this.deleteGoal(og.id),
+        delNote: (og.saved || 0) > 0 ? 'تحذف الهدف؟ المبلغ المحجوز ' + fmt(og.saved) + ' ⃄ يرجع لرصيدك المتاح.' : 'تحذف الهدف؟'
+      };
+    }
+    // نافذة إضافة/تعديل الهدف
+    const f = st.gf || {};
+    const setF = (p) => this.setState({ gf: Object.assign({}, this.state.gf, p) });
+    const accs = st.accounts.filter((a) => a.type !== 'card');
+    const old = f.id ? goals.find((x) => x.id === f.id) : null;
+    const calc = st.gf ? this.goalFormCalc(f, old ? old.saved : 0) : null;
+    const chip = (on) => ({ cbg: on ? 'var(--soft)' : 'var(--surface)', cbd: on ? 'var(--accent)' : 'var(--line)' });
+    const gfv = {
+      title: f.id ? 'تعديل الهدف' : 'هدف جديد', name: f.name || '', target: f.target || '', monthly: f.monthly || '', due: f.due || '', autoDate: f.autoDate || '',
+      onName: (e) => setF({ name: e.target.value }), onTarget: (e) => setF({ target: e.target.value.replace(/[^0-9.]/g, '') }),
+      onMonthly: (e) => setF({ monthly: e.target.value.replace(/[^0-9.]/g, '') }), onDue: (e) => setF({ due: e.target.value }), onAutoDate: (e) => setF({ autoDate: e.target.value }),
+      modeM: f.mode !== 'd', modeD: f.mode === 'd',
+      modes: [['m', 'أحجز مبلغ كل شهر'], ['d', 'أبي أوصل قبل تاريخ']].map((m) => Object.assign(chip(f.mode === m[0] || (!f.mode && m[0] === 'm')), { label: m[1], pick: () => setF({ mode: m[0] }) })),
+      accs: accs.map((a) => Object.assign(chip(f.accId === a.id), { label: accLabel(a), bal: fmt(availOf(a)) + ' ⃄', pick: () => setF({ accId: a.id }) }))
+        .concat([Object.assign(chip(!f.accId), { label: 'بدون حجز (متابعة بس)', bal: '', pick: () => setF({ accId: null }) })]),
+      autoSw: sw(!!f.auto), auto: !!f.auto, toggleAuto: () => setF({ auto: !f.auto }),
+      hasPreview: !!calc, preview: calc ? (f.mode === 'd' ? 'تحتاج تحجز ' + fmt(calc.monthly) + ' ⃄ كل شهر لمدة ' + monthsAr(calc.months) : 'توصل لهدفك خلال ' + monthsAr(calc.months)) : '',
+      sug: [['تلفون جديد', 500], ['سفرة', 800], ['سيارة', 3000], ['طوارئ', 1000], ['زواج', 5000]].map((x) => ({ label: x[0], use: () => setF({ name: x[0], target: String(x[1]) }) })),
+      save: () => this.saveGoal(), cancel: () => this.setState(f.id ? { modal: { type: 'goal', id: f.id }, gf: null } : { modal: null, gf: null })
+    };
+    return {
+      goalsList, noGoals: !active.length, hasGoals: active.length > 0, goalsSaved: fmt(goalsSavedN),
+      hasGoalsDone: done.length > 0, goalsDone: done.map((g) => ({ name: g.name, sub: fmt(g.target) + ' ⃄ · ' + dueLabel(g.doneAt) + ' ' + new Date(g.doneAt).getFullYear(),
+        remove: () => this.setState({ goals: this.state.goals.filter((x) => x.id !== g.id) }) })),
+      gvw, gfv, openGoalForm: () => this.openGoalForm(null)
+    };
   }
   toggleInstAuto(id) {
     const x = this.state.installments.find((y) => y.id === id);
@@ -1267,7 +1479,7 @@ class Component extends DCLogic {
       variableSpendByCategory: byCat, fixed: st.fixed.map((x) => ({ name: x.name, amount: x.amount })),
       installments: st.installments.map((x) => ({ name: x.name, total: x.total, paid: x.paid, remaining: Math.max(0, x.total - x.paid), monthly: x.monthly })),
       accounts: st.accounts.map((a) => ({ bank: bankOf(a.bank).ar, type: a.type, balance: a.balance })),
-      budgets: st.budgets, goals: st.goals.map((g) => ({ name: g.name, target: g.target, monthly: g.monthly })),
+      budgets: st.budgets, goals: st.goals.filter((g) => !g.doneAt).map((g) => ({ name: g.name, target: g.target, saved: g.saved || 0, remaining: goalLeft(g), monthly: g.monthly, dueDate: g.due || null })),
       pendingApprovals: st.pending.length, categories: CATS.map((c) => ({ id: c.id, ar: c.ar }))
     };
   }
@@ -1301,13 +1513,13 @@ class Component extends DCLogic {
           note(amount === 0 ? 'ألغيت سقف ' + this.catAr(cat) : 'سقف ' + this.catAr(cat) + ': ' + fmt(amount) + ' ⃄ شهرياً');
           return { ok: true, category: cat, amount };
         } },
-      { name: 'create_goal', description: 'Creates a savings goal shown in the app: name (Arabic), target in OMR, monthly contribution in OMR. Only call after the user asked for or explicitly agreed to it.',
+      { name: 'create_goal', description: 'Creates a savings goal shown in the app (section أهدافي in the accounts page): name (Arabic), target in OMR, monthly contribution in OMR. Only call after the user asked for or explicitly agreed to it.',
         inputSchema: { type: 'object', properties: { name: { type: 'string' }, target: { type: 'number' }, monthly: { type: 'number' } }, required: ['name', 'target', 'monthly'] },
         execute: (inp) => {
           const name = String(inp.name || '').slice(0, 40).trim();
           const target = Number(inp.target), monthly = Number(inp.monthly);
           if (!name || !(target > 0) || !(monthly > 0)) throw new Error('name, target>0 and monthly>0 are required');
-          this.setState({ goals: this.state.goals.concat([{ id: this.newId(), name, target, monthly }]) });
+          this.setState({ goals: this.state.goals.concat([{ id: this.newId(), name, target, monthly, saved: 0, log: [], ts: Date.now(), accId: null }]) });
           note('هدف ادخار: ' + name + ' · ' + fmt(target) + ' ⃄');
           return { ok: true };
         } }
@@ -2287,8 +2499,8 @@ class Component extends DCLogic {
       name: a.name || b.ar, initial: b.initial, color: b.color, bg: b.bg,
       sub: (a.name ? b.ar + ' · ' : '') + typeAr + (a.last4 ? ' •••• ' + a.last4 : ''),
       balLabel: isCard ? 'المبلغ المستحق' : (heldOf(a) > 0 ? 'رصيدك (بدون المعزول)' : 'الرصيد الحالي'), bal: (isCard && a.balance > 0 ? '-' : '') + fmt(availOf(a)),
-      hasHeld: !isCard && (a.held || []).length > 0, heldTotal: fmt(heldOf(a)), heldNote: 'الرصيد في البنك ' + fmt(a.balance) + ' ⃄، منه ' + fmt(heldOf(a)) + ' ⃄ معزول',
-      held: (a.held || []).map((h) => ({ title: h.title, amt: fmt(h.amount), date: dueLabel(h.ts || Date.now()), canAsk: st.heldAsk !== h.id, asking: st.heldAsk === h.id,
+      hasHeld: !isCard && (a.held || []).length > 0, heldTotal: fmt(heldOf(a)), heldNote: 'الرصيد في البنك ' + fmt(a.balance) + ' ⃄، منه ' + fmt(heldOf(a)) + ' ⃄ معزول' + ((a.held || []).some((h) => h.goalId) ? ' (منه لأهدافك)' : ''),
+      held: (a.held || []).map((h) => ({ title: h.title, amt: fmt(h.amount), date: dueLabel(h.ts || Date.now()), canAsk: !h.goalId && st.heldAsk !== h.id, asking: st.heldAsk === h.id,
         ask: () => this.setState({ heldAsk: h.id }), cancel: () => this.setState({ heldAsk: null }),
         returned: () => this.releaseHeld(a.id, h.id, true), mine: () => this.releaseHeld(a.id, h.id, false) })),
       openTransfer: () => this.setState({ modal: { type: 'transfer' }, tfr: { from: a.id, to: (st.accounts.find((x) => x.id !== a.id) || {}).id || null, amount: '', note: '' } }),
@@ -3071,14 +3283,13 @@ class Component extends DCLogic {
       shadeOpen: st.shadeOpen,
       hasHeads: !!headsView, heads: headsView || { actions: [] },
       notifs, noNotifs: notifs.length === 0, hasNotifs: notifs.length > 0, notifCount: String(notifs.length),
-      hasPlan: Object.keys(st.budgets).length > 0 || st.goals.length > 0,
+      hasPlan: Object.keys(st.budgets).length > 0,
       budgetsView: Object.keys(st.budgets).map((k) => {
         const sp = byCat[k] || 0, b = st.budgets[k];
         return { ar: this.catAr(k), amt: fmt(b), spent: fmt(sp), pct: Math.min(100, sp / b * 100).toFixed(1), bar: sp > b ? '#9C2F3D' : (sp >= b * 0.8 ? '#B0703F' : '#2E8A6B'),
           remove: () => { const nb = Object.assign({}, this.state.budgets); delete nb[k]; this.setState({ budgets: nb }); this.say('ألغيت السقف'); } };
       }),
-      goalsView: st.goals.map((g) => ({ name: g.name, sub: fmt(g.target) + ' ⃄ · ' + fmt(g.monthly) + ' شهرياً · توصل له خلال ' + monthsAr(Math.ceil(g.target / g.monthly - 1e-9)),
-        remove: () => this.setState({ goals: this.state.goals.filter((x) => x.id !== g.id) }) })),
+      goalsView: [], ...this.goalViews(),
 
       curTrip, pastTrips, hasPastTrips: pastTrips.length > 0, isTrip: st.screen === 'trip', td,
       tripBack: () => this.go(st.tripBackScreen && st.tripBackScreen !== 'trip' ? st.tripBackScreen : 'travel'),
@@ -3202,7 +3413,7 @@ class Component extends DCLogic {
         ['shareApp', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4']
       ].map((x) => ({ label: t[x[0]], path: x[1], fn: () => this.say(t.soonLink) })),
       hasModal: !!st.modal,
-      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
+      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
       closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null }),
       pinTitle: st.pinStage === 'confirm' ? t.confirmPin : t.setPin, pinErrText: st.pinErr ? (st.locked ? t.wrongPin : t.pinMismatch) : '',
       keypad, pinDots, pinDotsCls: st.pinErr ? 'shake' : '',

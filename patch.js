@@ -284,6 +284,12 @@
       if (!x.end) return;
       out.push({ key: 'sub-' + x.id + '-' + x.end, at: x.end - 33 * 3600000, title: 'اشتراك ' + x.name + ' ينتهي بكرة', body: 'المبلغ ' + R(x.amount) + '. إذا ما تحتاجه، ألغه قبل ما يتجدد.', screen: 'more' });
     });
+    (st.goals || []).forEach(function (g) {
+      if (g.doneAt) return;
+      var left = Math.max(0, g.target - (g.saved || 0));
+      if (left <= 0.0005) { if (g.reachedAt) out.push({ key: 'goal-done-' + g.id, at: g.reachedAt, title: 'وصلت لهدف ' + g.name + ' 🎉', body: 'جمعت ' + R(g.target) + '. افتح الهدف واضغط "اشتريته" لما تشتريه.', screen: 'more' }); return; }
+      if (g.autoDay && g.nextDue) out.push({ key: 'goal-' + g.id + '-' + g.nextDue, at: g.nextDue - 18 * 3600000, title: 'بكرة ينحجز قسط ' + g.name, body: 'بينحجز ' + R(Math.min(g.monthly, left)) + ' لهدف ' + g.name + '. باقي لك ' + R(left) + '.', screen: 'more' });
+    });
     if (bi && !bi.auto && st.txns.length >= 20) { var d = new Date(); out.push({ key: 'bk-' + d.getFullYear() + '-' + d.getMonth(), at: now + 24 * 3600000, title: 'خذ نسخة احتياطية', body: 'ارفع نسخة على Google Drive أو فعّل النسخ التلقائي من الإعدادات عشان ما تضيع بياناتك.', screen: 'settings' }); }
     return out;
   }
