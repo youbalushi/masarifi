@@ -404,18 +404,21 @@ function parseSms(text, learned, accounts) {
 function parseSmsCore(text, learned) {
   const s = (text || '').replace(/\s+/g, ' ').trim();
   if (!s) return null;
-  const debit = /خصم|سحب|debited|debit card|purchase|spent|withdrawn/i.test(s);
+  let debit = /خصم|سحب|شراء|سداد|دفع|debited|debit card|purchase|spent|withdrawn|used for|used at|paid|payment|charged|transferred/i.test(s);
   const atm = /ATM|صراف|cash withdrawal|سحب نقد/i.test(s);
   const refund = /استرداد|مرتجع|refund|reversal|reversed/i.test(s);
   const credit = /إيداع|ايداع|إضافة|اضافة|استلام|credited|deposited|received/i.test(s);
-  const am = s.match(/(?:(OMR|USD|EUR|AED|TRY|GBP|THB|SAR)\s*([\d,]+(?:\.\d+)?))|(?:([\d,]+(?:\.\d+)?)\s*(OMR|USD|EUR|AED|TRY|GBP|THB|SAR))/);
-  if (!am || (!debit && !credit)) return { ok: false };
+  const am = s.match(/(?:(OMR|RO|R\.O\.?|ر\.ع\.?|USD|EUR|AED|TRY|GBP|THB|SAR)\s*([\d,]+(?:\.\d+)?))|(?:([\d,]+(?:\.\d+)?)\s*(OMR|RO|R\.O\.?|ر\.ع\.?|ريال|USD|EUR|AED|TRY|GBP|THB|SAR))/);
+  if (!am) return { ok: false };
+  // رسالة بنك فيها مبلغ بس ما فهمت نوعها: نعتبرها خصم ونخليك تراجعها بدل ما تضيع
+  if (!debit && !credit) debit = true;
   const amount = parseFloat((am[2] || am[3]).replace(/,/g, ''));
-  const cur = am[1] || am[4];
+  let cur = am[1] || am[4];
+  if (/^(RO|R\.O|ر\.ع|ريال)/i.test(cur)) cur = 'OMR';
   const acc = s.match(/حسابك رقم\s*([0-9X#*]+)/i) || s.match(/(?:A\/C|account)(?:\s*(?:no\.?|number))?\s*[:#]?\s*([0-9X#*]{4,})/i);
   const tail = acc ? ((acc[1].match(/(\d+)$/) || ['', ''])[1]) : '';
   const last4 = tail.slice(-4);
-  const card = /بطاقة الخصم|debit card|card ending/i.test(s);
+  const card = /بطاقة الخصم|debit card|card ending|card of a\/c|card of account|بطاقتك/i.test(s);
   const mb = /mbanking|mobile banking|internet banking/i.test(s);
   const isCreditOnly = credit && !debit;
   let mm = s.match(/في\s+(.+?)\s+بتاريخ/);
@@ -430,7 +433,15 @@ function parseSmsCore(text, learned) {
   }
   let country = 'OM';
   const toks = merchantRaw.replace(/^\d+\s*-\s*/, '').replace(/\b\d{5,}\b/g, ' ').trim().split(/\s+/).filter(Boolean);
-  while (toks.length > 1 && /^[A-Z]{2}$/.test(toks[toks.length - 1])) { country = toks.pop(); }
+  // آخر كلمة من حرفين ممكن تكون رمز دولة (IST TR)، أو اختصار من اسم المحل (… TR = Trading)
+  while (toks.length > 1 && /^[A-Z]{2}$/.test(toks[toks.length - 1])) {
+    const code = toks[toks.length - 1], prev = toks[toks.length - 2] || '';
+    const cc = COUNTRIES.find((c) => c.code === code);
+    if (!cc) { if (code === 'OM') { toks.pop(); continue; } break; }
+    const cityOk = cc.keys.some((k) => /^[a-z ]+$/.test(k) && (k.indexOf(prev.toLowerCase()) === 0 || prev.toLowerCase().length >= 3 && k.indexOf(prev.toLowerCase()) !== -1)) || /^(IST|ANT|DXB|AUH|DOH|RUH|JED|BKK|KUL|LON|PAR)$/.test(prev);
+    if (code === 'TR' && !cityOk && cur === 'OMR') break;
+    country = toks.pop();
+  }
   const clean = toks.join(' ');
   let dateLabel = '', dateShort = '';
   const dm = s.match(/بتاريخ\s*(\d{4})\/?(\d{2})\/?(\d{2})(?:\s*(\d{2}):(\d{2}))?/);
@@ -443,7 +454,7 @@ function parseSmsCore(text, learned) {
     dateShort = parseInt(D, 10) + ' ' + mo;
     dateLabel = dateShort + ' ' + Y + (H ? ' · ' + H + ':' + Mi : '');
   }
-  const bm = s.match(/رصيدك الحالي(?: في الحساب)? هو\s*([\d,]+(?:\.\d+)?)/) || s.match(/balance(?:\s+is)?\s*(?:OMR\s*)?([\d,]+(?:\.\d+)?)/i);
+  const bm = s.match(/رصيدك الحالي(?: في الحساب)? هو\s*([\d,]+(?:\.\d+)?)/) || s.match(/الرصيد(?: المتاح| الحالي)?\s*:?\s*(?:OMR|ر\.ع\.?)?\s*([\d,]+(?:\.\d+)?)/) || s.match(/(?:balance|avl\.?\s*bal\.?|avail(?:able)?\.?\s*bal\.?)(?:\s+is)?\s*:?\s*(?:OMR\s*)?([\d,]+(?:\.\d+)?)/i);
   const balance = bm ? parseFloat(bm[1].replace(/,/g, '')) : null;
   const cityAr = city ? (OM_CITIES[city.toUpperCase()] || prettyName(city)) : '';
   const rm = refund ? (s.match(/(?:استرداد|مرتجع) من\s+(.+?)\s+بتاريخ/) || s.match(/refund(?:ed)?\s+(?:from|by)\s+(.+?)\s+on\s/i)) : null;
@@ -626,8 +637,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.7.4';
-const APP_BUILD = '16';
+const APP_VERSION = '1.7.6';
+const APP_BUILD = '18';
 
 function makeInitialState() {
   const now0 = new Date();

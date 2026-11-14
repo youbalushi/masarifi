@@ -345,6 +345,12 @@
       this.syncBars();
       if ((ps.locked && !this.state.locked) || (ps.screen === 'onboard' && this.state.screen !== 'onboard')) this.drainSms();
       if (!ps.locked && this.state.locked) this.autoBio();
+      // لما تنعالج عملية داخل التطبيق، ينشال إشعارها من الجوال
+      if (ps.pending !== this.state.pending && ok('cancelNotif')) {
+        var live = {};
+        this.state.pending.forEach(function (x) { (x.smsIds || []).forEach(function (i) { live[i] = 1; }); });
+        (ps.pending || []).forEach(function (x) { (x.smsIds || []).forEach(function (i) { if (!live[i]) { try { A.cancelNotif(String(i)); } catch (e) {} } }); });
+      }
       this.syncAccounts();
     }
     syncBars() {
@@ -387,6 +393,7 @@
       var items = [];
       try { items = JSON.parse(A.takeSms() || '[]'); } catch (e) { items = []; }
       var self = this;
+      var tag = function (pid, sid) { self.setState({ pending: self.state.pending.map(function (x) { return x.id === pid ? Object.assign({}, x, { smsIds: (x.smsIds || []).concat([sid]) }) : x; }) }); };
       items.forEach(function (it) {
         if (it.action === 'ignore') return;
         if (it.sender !== 'share' && !hasAccOrCard(it.body)) return;
@@ -394,13 +401,35 @@
         self.arrive(it.body);
         var p = self.state.pending.find(function (x) { return x.id >= before; })
           || self.state.pending.find(function (x) { return x.kind === 'newacc' && x.texts && x.texts.indexOf(it.body) !== -1; });
+        // رسالة بنك ما انفهمت: تنحط للمراجعة بدل ما تضيع
+        if (!p && it.sender !== 'share') {
+          var pr = parseSmsCore(it.body, {});
+          var nm = (it.body || '').match(/(\d{1,3}(?:,\d{3})*\.\d{1,3}|\d+\.\d{1,3})/);
+          if ((!pr || !pr.ok) && nm) {
+            var fb = { smsIds: [it.id], id: self.newId(), kind: 'unclear', amount: parseFloat(nm[1].replace(/,/g, '')), merchant: 'رسالة بنك', catId: null, note: 'ما فهمت هالرسالة كاملة، راجع المبلغ والنوع: ' + String(it.body).slice(0, 140), dateShort: todayLabels().dateShort, ts: it.ts || Date.now() };
+            self.setState({ pending: [fb].concat(self.state.pending) });
+            return;
+          }
+        }
         if (!p && it.sender === 'share') self.say('ما قدرت أقرأ هالرسالة. تأكد إنها رسالة بنك فيها مبلغ');
         if (!p) return;
+        if (it.id) tag(p.id, it.id);
         if (p.kind === 'newacc' && it.action === 'addacc') { self.newAccYes(p.id); return; }
         if (p.kind === 'newacc' && it.action === 'ignoreacc') { self.newAccNo(p.id); return; }
         if (it.action === 'approve' && p.kind === 'suggest' && !p.dupKind) self.approveCat(p.id, p.catId);
       });
       if (items.length) this.setState({ smsText: '' });
+      // إجراءات من الإشعار لعمليات صارت داخل التطبيق
+      var acts = [];
+      try { acts = ok('takeActions') ? JSON.parse(A.takeActions() || '[]') : []; } catch (e) { acts = []; }
+      acts.forEach(function (a) {
+        var p = self.state.pending.find(function (x) { return (x.smsIds || []).indexOf(a.id) !== -1; });
+        if (!p) return;
+        if (a.act === 'approve' && p.kind === 'suggest' && !p.dupKind) self.approveCat(p.id, p.catId);
+        else if (a.act === 'ignore') self.setState({ pending: self.state.pending.filter(function (x) { return x.id !== p.id; }) });
+        else if (a.act === 'addacc' && p.kind === 'newacc') self.newAccYes(p.id);
+        else if (a.act === 'ignoreacc' && p.kind === 'newacc') self.newAccNo(p.id);
+      });
     }
     bioUnlock() {
       var self = this;
@@ -629,7 +658,7 @@
       if (st.fxDate === new Date().toISOString().slice(0, 10) && v.tfCurLabel) v.tfCurLabel += ' · سعر اليوم';
       // فحص رسائل البنك والإشعارات
       var dg = null;
-      if (st.screen === 'settings' && ok('diag') && !IOS && !LITE) { try { dg = JSON.parse(A.diag()); } catch (e) { dg = null; } }
+      if (false && st.screen === 'settings' && ok('diag') && !IOS && !LITE) { try { dg = JSON.parse(A.diag()); } catch (e) { dg = null; } }
       if (dg) {
         var WHAT = { notbank: ['ما سجلتها', 'مو رسالة بنك، أو ما فيها رقم حساب أو بطاقة', '#8A8F8C'], ignored: ['تجاهلتها', 'من حساب اخترت تتجاهله', '#8A8F8C'], muted: ['ما سجلتها', 'قراءة رسائل هالحساب موقفة من صفحته', '#A85A2C'], inapp: ['وصلت', 'كان التطبيق مفتوح، فطلعت داخله بدون إشعار', '#23624D'], notified: ['وصلت + إشعار', 'انحطت للموافقة وطلع إشعار', '#23624D'], unknown: ['وصلت + إشعار', 'من حساب مو مسجل، سألتك تضيفه', '#23624D'], notifoff: ['وصلت بدون إشعار', 'انحطت للموافقة، بس الإشعارات مقفلة', '#9C2F3D'] };
         var chk = function (okv, label, sub, fix, fixLabel) { return { ok: !!okv, bad: !okv, label: label, sub: sub, mark: okv ? '✓' : '!', markBg: okv ? '#DCEFE6' : '#F8E1E3', markC: okv ? '#23624D' : '#9C2F3D', fix: fix || function () {}, fixLabel: fixLabel || '' }; };
