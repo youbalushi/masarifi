@@ -416,7 +416,7 @@
         if (it.id) tag(p.id, it.id);
         if (p.kind === 'newacc' && it.action === 'addacc') { self.newAccYes(p.id); return; }
         if (p.kind === 'newacc' && it.action === 'ignoreacc') { self.newAccNo(p.id); return; }
-        if (it.action === 'approve' && p.kind === 'suggest' && !p.dupKind) self.approveCat(p.id, p.catId);
+        if (it.action && String(it.action).indexOf('approve') === 0 && !p.dupKind) { var c1 = String(it.action).split(':')[1] || (p.kind === 'suggest' ? p.catId : null); if (c1 && (p.kind === 'suggest' || p.kind === 'unclear')) self.approveCat(p.id, c1); }
       });
       if (items.length) this.setState({ smsText: '' });
       // إجراءات من الإشعار لعمليات صارت داخل التطبيق
@@ -425,7 +425,7 @@
       acts.forEach(function (a) {
         var p = self.state.pending.find(function (x) { return (x.smsIds || []).indexOf(a.id) !== -1; });
         if (!p) return;
-        if (a.act === 'approve' && p.kind === 'suggest' && !p.dupKind) self.approveCat(p.id, p.catId);
+        if (String(a.act).indexOf('approve') === 0 && !p.dupKind) { var c2 = String(a.act).split(':')[1] || (p.kind === 'suggest' ? p.catId : null); if (c2 && (p.kind === 'suggest' || p.kind === 'unclear')) self.approveCat(p.id, c2); }
         else if (a.act === 'ignore') self.setState({ pending: self.state.pending.filter(function (x) { return x.id !== p.id; }) });
         else if (a.act === 'addacc' && p.kind === 'newacc') self.newAccYes(p.id);
         else if (a.act === 'ignoreacc' && p.kind === 'newacc') self.newAccNo(p.id);
@@ -454,8 +454,22 @@
       var self = this;
       if (this.state.locked && this.state.security && this.state.security.bio && this.state.security.pin) setTimeout(function () { if (self.state.locked) self.bioUnlock(); }, 450);
     }
+    // قواعد الفئات والفئات المتعلمة، عشان الإشعار يقترح الفئة بدون فتح التطبيق
+    syncCatRules() {
+      if (!ok('setCatRules')) return;
+      var st = this.state, names = {}, learned = {};
+      CATS.forEach(function (c) { names[c.id] = c.ar; });
+      var nrm = function (x) { return String(x || '').toLowerCase().replace(/[^a-z0-9\u0621-\u064A]/g, ''); };
+      Object.keys(st.learned || {}).forEach(function (k) { var n = nrm(k.split(' · ')[0]); if (n.length >= 3) learned[n] = st.learned[k]; });
+      var o = { names: names, learned: learned, rules: RULES.map(function (r) { return [r[0].source, r[1]]; }), ambig: AMBIG.map(function (r) { return r[0].source; }) };
+      var sig = JSON.stringify(o);
+      if (sig === this.lastCatSig) return;
+      this.lastCatSig = sig;
+      try { A.setCatRules(sig); } catch (e) {}
+    }
     syncAccounts() {
       if (!ok('setAccounts')) return;
+      this.syncCatRules();
       var st = this.state;
       var o = {
         accs: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch !== false; }).map(function (a) { return a.sig ? 'S:' + a.sig : String(a.last4); }),
