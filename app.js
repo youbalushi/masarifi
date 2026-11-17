@@ -409,6 +409,7 @@ function accHit(d, ad) {
 function parseSms(text, learned, accounts) {
   const p = parseSmsCore(text, learned);
   if (!p || !p.ok) return p;
+  if (p.msgTs && !p.ts) p.ts = p.msgTs;
   const ad = accDigitsOf(text);
   p.accDigits = ad;
   if (ad) {
@@ -491,7 +492,9 @@ function parseSmsCore(text, learned) {
       if (!catId) { kind = 'unclear'; if (!note) note = 'ما عرفت نوع هذا المتجر، حدده مرة وأتذكره بعدين.'; }
     }
   }
-  return { ok: true, amount, cur, last4, method: card ? 'بطاقة الخصم المباشر' : (mb ? 'تطبيق mBanking' : (isCreditOnly ? 'إيداع' : '—')), merchant, dateLabel, dateShort, balance, kind, catId, note, foreign: country !== 'OM' || cur !== 'OMR', country, fromLearned, isSalary: /راتب|salary/i.test(s), accSavings: /saving/i.test(s), bank: detectBank(s, acc ? acc[1] : ''), ts: Y ? new Date(+Y, +M - 1, +D, H ? +H : 12, Mi ? +Mi : 0).getTime() : Date.now() };
+  let msgTs = null;
+  if (Y) { const dt = new Date(+Y, parseInt(M, 10) - 1, parseInt(D, 10), H ? +H : 12, Mi ? +Mi : 0).getTime(); if (dt > 0 && dt <= Date.now() + 3600000 && dt > Date.now() - 90 * 86400000) msgTs = dt; }
+  return { ok: true, msgTs, amount, cur, last4, method: card ? 'بطاقة الخصم المباشر' : (mb ? 'تطبيق mBanking' : (isCreditOnly ? 'إيداع' : '—')), merchant, dateLabel, dateShort, balance, kind, catId, note, foreign: country !== 'OM' || cur !== 'OMR', country, fromLearned, isSalary: /راتب|salary/i.test(s), accSavings: /saving/i.test(s), bank: detectBank(s, acc ? acc[1] : ''), ts: Y ? new Date(+Y, +M - 1, +D, H ? +H : 12, Mi ? +Mi : 0).getTime() : Date.now() };
 }
 
 const RECEIPT = {
@@ -655,15 +658,15 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.1';
-const APP_BUILD = '22';
+const APP_VERSION = '1.8.2';
+const APP_BUILD = '23';
 
 function makeInitialState() {
   const now0 = new Date();
   return {
     screen: 'onboard', obStep: 0, tab: 'sms', txns: [], pending: [], nextId: 0, learned: {},
     accounts: [], ob: { bank: '', type: 'acc', last4: '', bal: '' }, showAccForm: false,
-    installments: [], ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false }, inOnce: true, inDate: '',
+    installments: [], ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false }, inOnce: true, inDate: '', inSalary: false, inSalDate: '',
     smsText: '', catPick: null, showPick: false,
     mAmt: '', mName: '', mCat: null, rStage: 'idle',
     trip: null, tf: { dest: '', cur: null, budget: '', manual: false, from: '', to: '' }, tfPick: false, lastTrip: null,
@@ -1330,36 +1333,74 @@ class Component extends DCLogic {
     this.setState({ pending: st.pending.filter((x) => x.id !== pid), income: st.income.concat([{ id: this.newId(), name: 'إيداع في ••' + (p.last4 || ''), amount: p.amount, once: true, ts: Date.now(), dateShort: p.dateShort || todayLabels().dateShort }]), accounts: this.balUpdated(st.accounts, p.last4, p.balance) });
     this.say('انضاف كدخل');
   }
-  salaryYes(pid) {
-    const st = this.state;
-    const p = st.pending.find((x) => x.id === pid);
-    if (!p) return;
-    const cyc = st.txns.filter((t) => !t.trip && t.cycle === st.cycle);
-    const spent = cyc.reduce((a, t) => a + t.amount, 0) + this.plannedFixed();
-    const incomeSum = st.income.reduce((a, x) => a + x.amount, 0);
-    const leftover = p.balance != null ? Math.max(0, p.balance - p.amount) : Math.max(0, incomeSum - spent);
-    let income = st.income.filter((x) => !x.once);
-    const si = income.findIndex((x) => /راتب/.test(x.name));
-    if (si === -1) income = income.concat([{ id: this.newId(), name: 'الراتب', amount: p.amount, once: false }]);
-    else income = income.map((x, i) => (i === si ? Object.assign({}, x, { amount: p.amount }) : x));
-    const instItems = this.instPending(p.dateShort || todayLabels().dateShort);
-    const savingsAcc = st.accounts.find((a) => a.type === 'savings' && !accMatch(a, p.last4));
-    const repId = this.newId();
-    this.setState({
-      pending: instItems.concat(st.pending.filter((x) => x.id !== pid)),
-      cycles: st.cycles.concat([{ n: st.cycle, startLabel: st.cycleStartLabel, spent, leftover }]),
-      cycle: st.cycle + 1, cycleStart: Date.now(), cycleStartLabel: p.dateShort || todayLabels().dateShort, cycleSalary: true,
-      income, accounts: this.balUpdated(st.accounts, p.last4, p.balance),
-      savingsOffer: leftover > 0.0005 ? { amount: leftover, fromLast4: p.last4 } : null,
-      reports: st.reports.concat([Object.assign(this.buildReport(st.cycle, 'تقرير ' + st.cycleStartLabel + ' – ' + (p.dateShort || '')), { id: repId })]), reportReady: repId
+  // تاريخ بداية الشهر المالي يتحدد من يوم نزول الراتب، ويتغير كل شهر حسب موعده
+  cycleFor(ts) { const st = this.state; return ts && ts < st.cycleStart ? st.cycle - 1 : st.cycle; }
+  retagTxns(txns, cycle, start) {
+    let changed = false;
+    const out = txns.map((t) => {
+      if (t.trip || t.demo || !t.ts) return t;
+      if (t.cycle === cycle && t.ts < start) { changed = true; return Object.assign({}, t, { cycle: cycle - 1 }); }
+      if (t.cycle === cycle - 1 && t.ts >= start) { changed = true; return Object.assign({}, t, { cycle }); }
+      return t;
     });
-    this.say('نزل الراتب، وبدأ شهر مالي جديد');
+    return changed ? out : txns;
+  }
+  startCycle(o) {
+    const st = this.state;
+    const start = Math.min(o.ts || Date.now(), Date.now());
+    if (start <= (st.cycleStart || 0) && st.cycleSalary) { this.say('تاريخ الراتب لازم يكون بعد بداية الشهر الحالي (' + st.cycleStartLabel + '). إذا تبي تعدّل البداية، غيّرها من صفحة الدخل'); return false; }
+    const d = new Date(start), label = d.getDate() + ' ' + AR_M[d.getMonth()];
+    // اللي انصرف بعد نزول الراتب يروح للشهر الجديد
+    const moved = st.txns.map((t) => (!t.trip && !t.demo && t.cycle === st.cycle && (t.ts || 0) >= start ? Object.assign({}, t, { cycle: st.cycle + 1 }) : t));
+    const old = moved.filter((t) => !t.trip && t.cycle === st.cycle);
+    const spent = old.reduce((a, t) => a + t.amount, 0) + this.plannedFixed();
+    const incomeSum = st.income.filter((x) => !x.once || (x.ts || 0) < start).reduce((a, x) => a + x.amount, 0);
+    const leftover = o.balance != null ? Math.max(0, o.balance - o.amount) : Math.max(0, incomeSum - spent);
+    let income = st.income.filter((x) => !x.once || (x.ts || 0) >= start);
+    const si = income.findIndex((x) => !x.once && /راتب/.test(x.name));
+    if (si === -1) income = income.concat([{ id: this.newId(), name: o.name || 'الراتب', amount: o.amount, once: false, salary: true }]);
+    else income = income.map((x, i) => (i === si ? Object.assign({}, x, { amount: o.amount, salary: true }) : x));
+    const instItems = this.instPending(label);
+    const savingsAcc = st.accounts.find((a) => a.type === 'savings' && !(o.last4 && accMatch(a, o.last4)));
+    const repId = this.newId();
+    this.setState({ txns: moved });
+    const rep = Object.assign(this.buildReport(st.cycle, 'تقرير ' + st.cycleStartLabel + ' – ' + label), { id: repId });
+    this.setState({
+      pending: instItems.concat(st.pending.filter((x) => x.id !== o.pid)),
+      cycles: st.cycles.concat([{ n: st.cycle, startLabel: st.cycleStartLabel, startTs: st.cycleStart, endTs: start, spent, leftover }]),
+      cycle: st.cycle + 1, cycleStart: start, cycleStartLabel: label, cycleSalary: true,
+      income, accounts: o.last4 ? this.balUpdated(st.accounts, o.last4, o.balance) : st.accounts,
+      savingsOffer: leftover > 0.0005 ? { amount: leftover, fromLast4: o.last4 } : null,
+      reports: st.reports.concat([rep]), reportReady: repId
+    });
+    this.say('نزل الراتب، وبدأ شهر مالي جديد من ' + label);
     this.nudge('salary' + st.cycle,
-      'نزل راتبك ' + fmt(p.amount) + ' ⃄، وبدأنا شهر مالي جديد.\n'
+      'نزل راتبك ' + fmt(o.amount) + ' ⃄، وبدأنا شهر مالي جديد من ' + label + '.\n'
       + (leftover > 0.0005
         ? 'بقي لك من الشهر اللي راح ' + fmt(leftover) + ' ⃄. ' + (savingsAcc ? 'أنصحك تحوله الحين لحساب الادخار في ' + bankOf(savingsAcc.bank).ar + ' قبل لا تبدأ تصرف.' : 'أنصحك تفتح حساب ادخار منفصل وتحوله له، وأضفه هنا عشان أتابعه.')
         : 'ما بقى شي من الشهر اللي راح. خلنا هالشهر نحدد مبلغ ادخار من أوله، حتى ١٠٪ من الراتب بداية ممتازة.')
       + (instItems.length ? '\nوعندك ' + instItems.length + (instItems.length === 1 ? ' قسط بينخصم' : ' أقساط بتنخصم') + ' هالشهر، أكّدها أول ما تنخصم.' : ''));
+    return true;
+  }
+  salaryYes(pid) {
+    const p = this.state.pending.find((x) => x.id === pid);
+    if (!p) return;
+    this.startCycle({ pid, amount: p.amount, ts: p.ts || Date.now(), last4: p.last4, balance: p.balance });
+  }
+  // تعديل بداية الشهر الحالي (لو سجلت الراتب متأخر)
+  setCycleStart(iso) {
+    const st = this.state, q = String(iso || '').split('-').map(Number);
+    if (q.length !== 3 || !q[0]) return;
+    const now = new Date();
+    let ts = new Date(q[0], q[1] - 1, q[2], 0, 0, 0).getTime();
+    if (isoOf(ts) === isoOf(now.getTime())) ts = Math.min(Date.now(), ts);
+    if (ts > Date.now()) { this.say('التاريخ ما يكون بعد اليوم'); return; }
+    const prev = (st.cycles || []).length ? st.cycles[st.cycles.length - 1] : null;
+    if (prev && prev.startTs && ts <= prev.startTs) { this.say('لازم يكون بعد بداية الشهر اللي قبله (' + prev.startLabel + ')'); return; }
+    const d = new Date(ts), label = d.getDate() + ' ' + AR_M[d.getMonth()];
+    const cycles = prev ? st.cycles.map((c, i) => (i === st.cycles.length - 1 ? Object.assign({}, c, { endTs: ts }) : c)) : st.cycles;
+    this.setState({ cycleStart: ts, cycleStartLabel: label, cycles, txns: this.retagTxns(st.txns, st.cycle, ts) });
+    this.say('صار الشهر المالي يبدأ من ' + label + '، وانحسبت المصاريف والدخل من هالتاريخ');
   }
   instYes(pid) {
     const st = this.state;
@@ -1625,6 +1666,7 @@ class Component extends DCLogic {
   componentDidUpdate(pp, ps) {
     try { if (ps.screen !== this.state.screen && this.scrollEl) this.scrollEl.scrollTop = 0; } catch (e) {}
     try { if (ps.txns !== this.state.txns && (this.state.subs || []).length) this.syncSubs(); } catch (e) {}
+    try { if ((ps.txns !== this.state.txns || ps.cycleStart !== this.state.cycleStart) && this.state.cycleSalary) { const nt = this.retagTxns(this.state.txns, this.state.cycle, this.state.cycleStart); if (nt !== this.state.txns) this.setState({ txns: nt }); } } catch (e) {}
     try {
       if (this.state.screen === 'advisor' && this.endEl && (ps.chat !== this.state.chat || ps.screen !== 'advisor')) this.endEl.scrollIntoView({ block: 'end', behavior: 'smooth' });
     } catch (e) {}
@@ -1947,6 +1989,15 @@ class Component extends DCLogic {
 
   addIncome() {
     const a = parseFloat(this.state.inAmt);
+    if (this.state.inSalary) {
+      if (!(a > 0)) { this.say('اكتب مبلغ الراتب'); return; }
+      const q = String(this.state.inSalDate || isoOf(Date.now())).split('-').map(Number);
+      let ts = new Date(q[0], q[1] - 1, q[2], 0, 0, 0).getTime();
+      if (isoOf(ts) === isoOf(Date.now())) ts = Date.now();
+      if (!(ts > 0) || ts > Date.now()) { this.say('تاريخ الراتب ما يكون بعد اليوم'); return; }
+      if (this.startCycle({ amount: a, ts, name: (this.state.inName || '').trim() || 'الراتب' })) this.setState({ inName: '', inAmt: '', inSalary: false, inSalDate: '' });
+      return;
+    }
     if (!this.state.inName.trim() || !(a > 0)) { this.say('اكتب الاسم والمبلغ'); return; }
     const id = this.newId();
     const once = this.state.inOnce;
@@ -3225,12 +3276,17 @@ class Component extends DCLogic {
 
       statRows, donutBg, insights, tips,
 
-      incomeView: st.income.map((x) => ({ name: x.name, amt: fmt(x.amount), sub: x.once ? 'يدوي · ' + (x.dateShort || '') : 'يتكرر تلقائياً كل شهر' + (x.day ? ' يوم ' + x.day : ''), tagC: x.once ? '#A85A2C' : 'var(--accent)', remove: () => this.setState({ income: this.state.income.filter((y) => y.id !== x.id) }) })),
+      incomeView: st.income.map((x) => ({ name: x.name, amt: fmt(x.amount), sub: x.once ? 'يدوي · ' + (x.dateShort || '') : ((x.salary || (/راتب/.test(x.name) && !x.day)) ? 'نزل ' + st.cycleStartLabel + ' · يبدأ منه الشهر' : 'يتكرر تلقائياً كل شهر' + (x.day ? ' يوم ' + x.day : '')), tagC: x.once ? '#A85A2C' : 'var(--accent)', remove: () => this.setState({ income: this.state.income.filter((y) => y.id !== x.id) }) })),
       inTypeChips, inRepOn: !st.inOnce, inRepSw: { bg: !st.inOnce ? 'var(--accent)' : 'var(--off)', x: knobX(!st.inOnce, 20), aria: !st.inOnce ? 'true' : 'false' },
       toggleInRep: () => this.setState({ inOnce: !this.state.inOnce }), inDate: st.inDate || '', onInDate: (e) => this.setState({ inDate: e.target.value }),
+      cycleStartLabel: st.cycleStartLabel, cycleStartIso: isoOf(st.cycleStart), todayIso: isoOf(Date.now()), onCycleStart: (e) => this.setCycleStart(e.target.value),
+      cycleStartSub: st.cycleSalary ? 'يتحدد من يوم نزول الراتب. لو سجلت الراتب متأخر، عدّل التاريخ هنا وتنحسب المصاريف من يومها.' : 'الراتب ما انسجل بعد. لما ينزل وتأكده من رسالة البنك أو تسجله هنا، يبدأ شهر جديد من يومه.',
+      inSalary: !!st.inSalary, notInSalary: !st.inSalary, inSalDate: st.inSalDate || isoOf(Date.now()), onInSalDate: (e) => this.setState({ inSalDate: e.target.value }),
+      inSalSw: { bg: st.inSalary ? 'var(--accent)' : 'var(--off)', x: knobX(!!st.inSalary, 20), aria: st.inSalary ? 'true' : 'false' },
+      toggleInSal: () => this.setState({ inSalary: !this.state.inSalary, inName: !this.state.inSalary && !this.state.inName ? 'الراتب' : this.state.inName }),
       inRepSub: st.inOnce ? 'مقفل: تسجل الدخل بيدك أو ينقرى من رسالة البنك، لأن موعده ممكن يتقدم أو يتأخر' : 'ينحسب تلقائياً كل شهر في التاريخ اللي تحدده',
       fixedView: st.fixed.map((x) => ({ name: x.name, amt: fmt(x.amount), dayLabel: x.day ? 'يتخصم يوم ' + x.day + ' من كل شهر' : 'شهرياً', remove: () => this.setState({ fixed: this.state.fixed.filter((y) => y.id !== x.id) }) })),
-      inSug: (st.inOnce ? ['مكافأة', 'بيع غرض', 'هدية', 'استرداد مبلغ'] : ['الراتب', 'بدل', 'عمل حر', 'إيجار عقار']).map((l) => ({ label: l, use: () => this.setState({ inName: l }) })),
+      inSug: (st.inOnce ? ['الراتب', 'مكافأة', 'بيع غرض', 'هدية', 'استرداد مبلغ'] : ['بدل', 'عمل حر', 'إيجار عقار']).map((l) => ({ label: l, use: () => this.setState(l === 'الراتب' ? { inName: l, inSalary: true, inOnce: true } : { inName: l }) })),
       fxSug: ['إيجار', 'إنترنت', 'كهرباء ومياه', 'قسط سيارة', 'اشتراكات', 'تأمين'].map((l) => ({ label: l, use: () => this.setState({ fxName: l }) })),
       inName: st.inName, inAmt: st.inAmt, fxName: st.fxName, fxAmt: st.fxAmt, fxDay: st.fxDay,
       onInName: (e) => this.setState({ inName: e.target.value }), onInAmt: (e) => this.setState({ inAmt: e.target.value.replace(/[^0-9.]/g, '') }),
