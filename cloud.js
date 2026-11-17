@@ -127,7 +127,7 @@
     if (!trip || !trip.cloudKey) return Promise.resolve();
     var key = trip.cloudKey, self = this;
     return token().then(function () {
-      return fsCommit([upd('trips/' + key, { ownerUid: uid(), ownerName: myName(st), dest: trip.dest, cur: trip.cur || '', from: trip.from || '', to: trip.to || '', active: !!trip.active, updatedAt: Date.now() })]);
+      return fsCommit([upd('trips/' + key, { ownerUid: uid(), ownerName: String(myName(st) || '').slice(0, 60), dest: String(trip.dest || 'رحلة').slice(0, 60), cur: trip.cur || '', from: trip.from || '', to: trip.to || '', active: !!trip.active, updatedAt: Date.now() })]);
     }).then(function () { return self.syncTripItems(key, trip.id); });
   };
   // يرفع مصاريفي في الرحلة ويجيب مصاريف الكل
@@ -137,10 +137,10 @@
       var st = self.state, me = uid();
       var mine = localTripId ? st.txns.filter(function (t) { return t.trip === localTripId; }) : [];
       var name = myName(st);
-      var writes = mine.map(function (t) { return upd('trips/' + key + '/items/' + me + '_' + t.id, { uid: me, by: name, amount: t.amount, catId: t.catId || 'other', merchant: t.merchant || '', ts: t.ts || Date.now(), dateShort: t.dateShort || '' }); });
+      var writes = mine.map(function (t) { return upd('trips/' + key + '/items/' + me + '_' + t.id, { uid: me, by: String(name || '').slice(0, 60), amount: Math.abs(Number(t.amount) || 0), catId: String(t.catId || 'other').slice(0, 30), merchant: String(t.merchant || '').slice(0, 100), ts: t.ts || Date.now(), dateShort: t.dateShort || '' }); });
       var p0 = writes.length ? fsCommit(writes) : Promise.resolve();
       return p0.then(function () { return fsGet('trips/' + key + '/items?pageSize=300'); }).then(function (j) {
-        var items = ((j && j.documents) || []).map(docOf);
+        var items = ((j && j.documents) || []).map(docOf).map(function (it) { return Object.assign({}, it, { amount: Math.abs(Number(it.amount) || 0), merchant: String(it.merchant == null ? '' : it.merchant).slice(0, 100), by: String(it.by == null ? '' : it.by).slice(0, 60), catId: typeof it.catId === 'string' ? it.catId : 'other' }); });
         if (localTripId) {
           var keep = {};
           mine.forEach(function (t) { keep[me + '_' + t.id] = 1; });
@@ -206,7 +206,7 @@
     token().then(function () {
       var me = uid();
       var id = me + '_m' + Date.now();
-      var item = { uid: me, by: myName(self.state), amount: Math.round(a * 1000) / 1000, catId: st.ctCat || 'other', merchant: (st.ctName || '').trim() || self.catAr(st.ctCat || 'other'), ts: Date.now(), dateShort: todayLabels().dateShort };
+      var item = { uid: me, by: String(myName(self.state) || '').slice(0, 60), amount: Math.round(a * 1000) / 1000, catId: st.ctCat || 'other', merchant: ((st.ctName || '').trim() || self.catAr(st.ctCat || 'other')).slice(0, 100), ts: Date.now(), dateShort: todayLabels().dateShort };
       return fsCommit([upd('trips/' + ct.key + '/items/' + id, item)]);
     }).then(function () {
       self.setState({ ctAmt: '', ctName: '' });
@@ -269,7 +269,7 @@
   P.iosPull = function () {
     var self = this, ib = this.state.iosBox;
     if (!IOS || !ib || !ib.ready || this.iosPulling) return Promise.resolve();
-    if (this.state.screen === 'onboard' || this.state.locked) return Promise.resolve();
+    if (this.state.screen === 'onboard' || this.state.locked || this.state.viewing) return Promise.resolve();
     this.iosPulling = true;
     var tk;
     return token().then(function (t) { tk = t; return rtReq('GET', '/inbox/' + ib.token + '.json', null, t); }).then(function (o) {

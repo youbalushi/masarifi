@@ -2,7 +2,7 @@
 (function () {
   var A = window.Android || null;
   var SAVE_KEY = 'masarifi_data_v1';
-  var EXTRA_KEYS = ['tourDone', 'hideAmt', 'obDone', 'aiKey', 'aiModel', 'notifAsked', 'fxRates', 'fxDate', 'anon', 'cTrips', 'iosBox'];
+  var EXTRA_KEYS = ['tourDone', 'hideAmt', 'obDone', 'aiKey', 'aiModel', 'notifAsked', 'fxRates', 'fxDate', 'anon', 'cTrips', 'iosBox', 'knownSenders', 'pinFails', 'pinWait'];
   var P = Component.prototype;
   var comp = null;
 
@@ -399,7 +399,9 @@
       var items = [];
       try { items = JSON.parse(A.takeSms() || '[]'); } catch (e) { items = []; }
       var self = this;
-      var tag = function (pid, sid) { self.setState({ pending: self.state.pending.map(function (x) { return x.id === pid ? Object.assign({}, x, { smsIds: (x.smsIds || []).concat([sid]) }) : x; }) }); };
+      var known = self.state.knownSenders || [];
+      var realSender = function (snd) { return snd && snd !== 'share' && snd !== 'ios'; };
+      var tag = function (pid, sid, snd) { self.setState({ pending: self.state.pending.map(function (x) { if (x.id !== pid) return x; var o = { smsIds: (x.smsIds || []).concat(sid ? [sid] : []) }; if (realSender(snd) && !x.sender) { o.sender = snd; o.newSender = known.indexOf(snd) === -1; } return Object.assign({}, x, o); }) }); };
       items.forEach(function (it) {
         if (it.action === 'ignore') return;
         if (it.sender !== 'share' && !hasAccOrCard(it.body)) return;
@@ -412,14 +414,14 @@
           var pr = parseSmsCore(it.body, {});
           var nm = (it.body || '').match(/(\d{1,3}(?:,\d{3})*\.\d{1,3}|\d+\.\d{1,3})/);
           if ((!pr || !pr.ok) && nm) {
-            var fb = { smsIds: [it.id], id: self.newId(), kind: 'unclear', amount: parseFloat(nm[1].replace(/,/g, '')), merchant: 'رسالة بنك', catId: null, note: 'ما فهمت هالرسالة كاملة، راجع المبلغ والنوع: ' + String(it.body).slice(0, 140), dateShort: todayLabels().dateShort, ts: it.ts || Date.now() };
+            var fb = { smsIds: [it.id], sender: realSender(it.sender) ? it.sender : undefined, newSender: realSender(it.sender) && known.indexOf(it.sender) === -1, id: self.newId(), kind: 'unclear', amount: parseFloat(nm[1].replace(/,/g, '')), merchant: 'رسالة بنك', catId: null, note: 'ما فهمت هالرسالة كاملة، راجع المبلغ والنوع: ' + String(it.body).slice(0, 140), dateShort: todayLabels().dateShort, ts: it.ts || Date.now() };
             self.setState({ pending: [fb].concat(self.state.pending) });
             return;
           }
         }
         if (!p && it.sender === 'share') self.say('ما قدرت أقرأ هالرسالة. تأكد إنها رسالة بنك فيها مبلغ');
         if (!p) return;
-        if (it.id) tag(p.id, it.id);
+        if (it.id || realSender(it.sender)) tag(p.id, it.id, it.sender);
         if (p.kind === 'newacc' && it.action === 'addacc') { self.newAccYes(p.id); return; }
         if (p.kind === 'newacc' && it.action === 'ignoreacc') { self.newAccNo(p.id); return; }
         if (it.action && String(it.action).indexOf('approve') === 0 && !p.dupKind) { var c1 = String(it.action).split(':')[1] || (p.kind === 'suggest' ? p.catId : null); if (c1 && (p.kind === 'suggest' || p.kind === 'unclear')) self.approveCat(p.id, c1); }
@@ -436,6 +438,13 @@
         else if (a.act === 'addacc' && p.kind === 'newacc') self.newAccYes(p.id);
         else if (a.act === 'ignoreacc' && p.kind === 'newacc') self.newAccNo(p.id);
       });
+    }
+    // المرسل يصير موثوق أول ما توافق على رسالة منه
+    trustSender(p) {
+      if (!p || !p.sender) return;
+      var k = this.state.knownSenders || [];
+      if (k.indexOf(p.sender) !== -1) return;
+      this.setState({ knownSenders: k.concat([p.sender]).slice(-30), pending: this.state.pending.map(function (x) { return x.sender === p.sender ? Object.assign({}, x, { newSender: false }) : x; }) });
     }
     bioUnlock() {
       var self = this;
@@ -480,7 +489,8 @@
       var o = {
         accs: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch !== false; }).map(function (a) { return a.sig ? 'S:' + a.sig : String(a.last4); }),
         muted: st.accounts.filter(function (a) { return a.type !== 'cash' && a.watch === false; }).map(function (a) { return a.sig ? 'S:' + a.sig : String(a.last4); }),
-        ignored: [].concat.apply([], (st.ignoredAccs || []).map(function (g) { return g.sig ? ['S:' + g.sig] : [String(g.digits)].concat(g.alts || []); }))
+        ignored: [].concat.apply([], (st.ignoredAccs || []).map(function (g) { return g.sig ? ['S:' + g.sig] : [String(g.digits)].concat(g.alts || []); })),
+        senders: st.knownSenders || [], private: !!(st.security && st.security.pin)
       };
       var sig = JSON.stringify(o);
       if (sig === this.lastAccSig) return;
@@ -769,6 +779,17 @@
     return 'false';
   };
 
+  // الموافقة على رسالة تخلي مرسلها موثوق
+  ['approveCat', 'creditOnce', 'salaryYes', 'cashIn', 'atmAsExpense', 'instYes', 'linkRefund', 'internalYes', 'newAccYes'].forEach(function (nm) {
+    var orig = AppComponent.prototype[nm];
+    if (typeof orig !== 'function') return;
+    AppComponent.prototype[nm] = function (pid) {
+      var p = this.state.pending.find(function (x) { return x.id === pid; });
+      var r = orig.apply(this, arguments);
+      try { this.trustSender(p); } catch (e) {}
+      return r;
+    };
+  });
   window.MASA = { AppComponent: AppComponent, call: call, ok: ok, saveNow: saveNow, A: A, getComp: function () { return comp; } };
   window.addEventListener('load', function () {
     DCRuntime.mount(AppComponent, window.TPL, document.getElementById('app'));

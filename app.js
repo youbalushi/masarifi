@@ -655,8 +655,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.0';
-const APP_BUILD = '21';
+const APP_VERSION = '1.8.1';
+const APP_BUILD = '22';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1415,6 +1415,11 @@ class Component extends DCLogic {
     return ids.slice(0, n);
   }
   notifFor(p) {
+    const v = this.notifFor0(p);
+    if (!p.newSender || !v) return v;
+    return Object.assign({}, v, { title: '⚠️ مرسل جديد · ' + v.title, body: 'أول رسالة من "' + p.sender + '". تأكد إنها من البنك وراجعها في التطبيق.', actions: (v.actions || []).filter((x) => /تجاهل|فئة ثانية|افتح/.test(x.label || '')) });
+  }
+  notifFor0(p) {
     const k = p.kind;
     const sc = p.catId ? CATS.find((c) => c.id === p.catId) : null;
     const amt = fmt(p.amount) + ' ⃄';
@@ -1676,8 +1681,14 @@ class Component extends DCLogic {
   pinComplete(buf) {
     const st = this.state;
     if (st.locked) {
-      if (buf === st.security.pin) this.setState({ locked: false, pinBuf: '' });
-      else this.setState({ pinErr: true, pinBuf: '' });
+      const wait = (st.pinWait || 0) - Date.now();
+      if (wait > 0) { this.setState({ pinBuf: '' }); this.say('محاولات كثيرة. جرّب بعد ' + Math.ceil(wait / 1000) + ' ثانية'); return; }
+      if (buf === st.security.pin) this.setState({ locked: false, pinBuf: '', pinFails: 0, pinWait: 0 });
+      else {
+        const n = (st.pinFails || 0) + 1, lock = n >= 5 ? 30000 * Math.pow(2, Math.min(n - 5, 6)) : 0;
+        this.setState({ pinErr: true, pinBuf: '', pinFails: n, pinWait: lock ? Date.now() + lock : 0 });
+        if (lock) this.say('الرمز غلط ' + n + ' مرات. انتظر ' + Math.round(lock / 1000) + ' ثانية');
+      }
       return;
     }
     if (st.modal && st.modal.type === 'pin') {
@@ -1705,13 +1716,19 @@ class Component extends DCLogic {
   dataSnapshot() {
     const st = this.state;
     const o = { app: 'masarifi', v: 1, at: Date.now() };
-    DATA_KEYS.forEach((k) => { o[k] = st[k]; });
+    DATA_KEYS.forEach((k) => { if (k !== 'security') o[k] = st[k]; });
     return o;
   }
   restoreData(o) {
     if (!o || o.app !== 'masarifi') { this.say(this.state.lang === 'en' ? 'This is not a Masarifi backup file' : 'هذا مو ملف نسخة احتياطية من مصاريفي'); return; }
+    const ARR = ['accounts', 'txns', 'pending', 'income', 'fixed', 'installments', 'goals', 'cats', 'cycles', 'shares', 'chat', 'seasons', 'subsIgnored', 'subs', 'moves', 'reports', 'trips', 'ignoredAccs'];
+    const OBJ = ['profile', 'learned', 'budgets', 'notif', 'perms'];
+    const bad = ARR.some((k) => o[k] != null && !Array.isArray(o[k])) || OBJ.some((k) => o[k] != null && (typeof o[k] !== 'object' || Array.isArray(o[k])))
+      || (Array.isArray(o.txns) && o.txns.some((t) => !t || typeof t !== 'object' || typeof t.amount !== 'number'))
+      || (Array.isArray(o.accounts) && o.accounts.some((a) => !a || typeof a !== 'object' || typeof a.balance !== 'number'));
+    if (bad) { this.say('ملف النسخة الاحتياطية تالف، ما رجّعت منه شي'); return; }
     const patch = { screen: 'home', modal: null };
-    DATA_KEYS.forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
+    DATA_KEYS.forEach((k) => { if (k !== 'security' && o[k] != null) patch[k] = o[k]; });
     patch.fixed = [];
     this.setState(patch);
     this.say(this.state.lang === 'en' ? 'Data restored' : 'رجعت بياناتك من النسخة الاحتياطية');
@@ -2115,7 +2132,7 @@ class Component extends DCLogic {
     const st = this.state;
     const r = (!st.reportId || st.reportId === 'current') ? this.buildReport(st.cycle, 'تقرير هالشهر') : st.reports.find((x) => x.id === st.reportId);
     if (!r) return;
-    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const esc = (v) => { let x = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(x) && !/^-?[\d.,]+$/.test(x)) x = "'" + x; return '"' + x.replace(/"/g, '""') + '"'; };
     const lines = [['التاريخ', 'الجهة', 'الفئة', 'المبلغ (ر.ع)', 'ملاحظة'].map(esc).join(',')].concat(r.rows.map((x) => [x.date, x.merchant, x.cat, fmt(x.amount), x.note].map(esc).join(',')));
     const csv = '﻿' + lines.join('\r\n');
     let dl = null;
@@ -2214,7 +2231,7 @@ class Component extends DCLogic {
   }
   exportPeriodPdf(R) { this.say('تصدير PDF يشتغل في التطبيق على الجوال'); }
   async exportPeriod(R) {
-    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const esc = (v) => { let x = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(x) && !/^-?[\d.,]+$/.test(x)) x = "'" + x; return '"' + x.replace(/"/g, '""') + '"'; };
     const row = (arr) => arr.map(esc).join(',');
     const lines = [row(['تقرير المصاريف', R.label]), row(['المصروف (ر.ع)', fmt(R.spent)]), row(['الدخل (ر.ع)', fmt(R.income)]), row(['الفرق (ر.ع)', fmt(R.income - R.spent)]), row(['عدد العمليات', R.count]), ''];
     lines.push(row(['الفئة', 'المبلغ (ر.ع)', 'النسبة', 'عدد العمليات']));
@@ -2470,7 +2487,7 @@ class Component extends DCLogic {
   deleteAccount() {
     const st = this.state;
     if (!st.accDel) { this.setState({ accDel: true }); return; }
-    this.setState({ accounts: st.accounts.filter((x) => x.id !== st.accId), screen: st.accBack || 'more', accId: null, accDel: false });
+    this.setState({ accounts: st.accounts.filter((x) => x.id !== st.accId), goals: (st.goals || []).map((g) => (g.accId === st.accId ? Object.assign({}, g, { accId: null }) : g)), screen: st.accBack || 'more', accId: null, accDel: false });
     this.say('انحذف الحساب. عملياته باقية في سجلك');
   }
   buildAccView(catMap) {
@@ -3160,7 +3177,7 @@ class Component extends DCLogic {
       monthLabel: AR_M[now.getMonth()] + ' ' + now.getFullYear(),
       totalStr: fmt(total), fixedStr: fmt(fixedSum), incomeStr: incomeSum > 0 ? fmt(incomeSum) : '—',
       remainStr: incomeSum > 0 ? fmt(incomeSum - total) : '—', noIncome: incomeSum <= 0, spentW: spentW.toFixed(1),
-      hasPending: st.pending.length > 0, pendingCount: String(st.pending.length), pendingView,
+      hasPending: st.pending.length > 0, pendingCount: String(st.pending.length), pendingView: pendingView.map((v, i) => { const p = st.pending[i]; return p && p.newSender ? Object.assign({}, v, { question: '⚠️ أول رسالة توصلني من "' + p.sender + '". تأكد إنها من البنك قبل لا توافق. ' + v.question, bd: '#E0A458' }) : v; }),
       recent: st.txns.filter((x) => !x.trip).slice(0, 8).map(rowOf), noTx: !st.txns.some((x) => !x.trip),
       tripOn, tripOff: !tripOn, tripDest: trip ? trip.dest : '', tripCur: trip ? trip.cur : '',
       tripSpentStr: fmt(tripSpent), tripLocalStr: Math.round(tripSpent / rate).toLocaleString('en-US'),
