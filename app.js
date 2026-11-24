@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.4';
-const APP_BUILD = '25';
+const APP_VERSION = '1.8.5';
+const APP_BUILD = '26';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -920,6 +920,18 @@ class Component extends DCLogic {
     accounts = this.moveBal(accounts, m.to, -m.amount);
     this.setState({ accounts, moves: st.moves.filter((x) => x.id !== id), modal: null });
     this.say('انلغى التحويل ورجعت الأرصدة');
+  }
+  // ===== تعديل الرصيد يدوياً =====
+  adjustBalance() {
+    const st = this.state, v = parseFloat(st.adjAmt);
+    if (isNaN(v)) { this.say('اكتب الرصيد بالأرقام'); return; }
+    const a = st.accounts.find((x) => x.id === st.accId);
+    if (!a) return;
+    const nb = Math.round(v * 1000) / 1000, old = a.balance || 0;
+    if (Math.abs(nb - old) < 0.0005) { this.setState({ modal: null }); return; }
+    const log = (a.adjLog || []).concat([{ ts: Date.now(), from: old, to: nb }]).slice(-20);
+    this.setState({ accounts: st.accounts.map((x) => (x.id === a.id ? Object.assign({}, x, { balance: nb, adjLog: log }) : x)), modal: null, adjAmt: '' });
+    this.say('تعدّل الرصيد من ' + fmt(old) + ' إلى ' + fmt(nb) + ' ⃄');
   }
   // ===== عزل مبلغ =====
   addHeld() {
@@ -2576,6 +2588,7 @@ class Component extends DCLogic {
         returned: () => this.releaseHeld(a.id, h.id, true), mine: () => this.releaseHeld(a.id, h.id, false) })),
       openTransfer: () => this.setState({ modal: { type: 'transfer' }, tfr: { from: a.id, to: (st.accounts.find((x) => x.id !== a.id) || {}).id || null, amount: '', note: '' } }),
       openHold: () => this.setState({ modal: { type: 'hold' }, hd: { title: '', amount: '' } }),
+      openAdj: () => this.setState({ modal: { type: 'adjBal' }, adjAmt: String(a.balance || 0) }),
       txOpen: !!st.accTxOpen, txAria: st.accTxOpen ? 'true' : 'false', txRot: st.accTxOpen ? '180deg' : '0deg', toggleTx: () => this.setState({ accTxOpen: !this.state.accTxOpen }),
       balNote: isCash ? 'يزيد لما تسحب من الصراف وتختار "للنقد"، وينقص لما تسجل مصروف كاش' : (a.watch ? 'يتحدث تلقائياً من رسائل البنك' : 'قراءة الرسائل متوقفة، حدّث الرصيد يدوي من تحت'),
       tiles: [
@@ -3393,6 +3406,14 @@ class Component extends DCLogic {
           save: () => this.doTransfer() }; })(),
       mv: (() => { const m = st.modal && st.modal.type === 'move' ? (st.moves || []).find((x) => x.id === st.modal.id) : null; if (!m) return { rows: [] }; const fa = st.accounts.find((x) => x.id === m.from), ta = st.accounts.find((x) => x.id === m.to);
         return { amt: fmt(m.amount), rows: [{ k: 'من', v: fa ? accLabel(fa) : '—' }, { k: 'إلى', v: ta ? accLabel(ta) : '—' }, { k: 'التاريخ', v: dueLabel(m.ts) + ' ' + new Date(m.ts).getFullYear() }, { k: 'السبب', v: m.note || '—' }], undo: () => this.undoTransfer(m.id) }; })(),
+      adj: (() => {
+        const a = st.accounts.find((x) => x.id === st.accId) || { balance: 0 };
+        const card = a.type === 'card', v = parseFloat(st.adjAmt), d = isNaN(v) ? 0 : Math.round((v - (a.balance || 0)) * 1000) / 1000;
+        return { cur: fmt(a.balance || 0), amount: st.adjAmt || '', onAmount: (e) => this.setState({ adjAmt: e.target.value.replace(/[^0-9.\-]/g, '') }),
+          note: card ? 'اكتب المبلغ المستحق على البطاقة الحين.' : ((a.held || []).length ? 'اكتب الرصيد اللي في البنك فعلاً. المبالغ المعزولة تنخصم منه بعدين لحالها.' : 'اكتب الرصيد اللي في الحساب فعلاً، والتطبيق يكمل منه.') + (a.watch && a.type !== 'cash' ? ' ورسالة البنك الجاية بتحدّثه لحالها بعد.' : ''),
+          hasDiff: !isNaN(v) && Math.abs(d) > 0.0005, diff: (d > 0 ? 'بيزيد ' : 'بينقص ') + fmt(Math.abs(d)) + ' ⃄ عن المسجل', diffC: d > 0 ? '#23624D' : '#9C2F3D',
+          save: () => this.adjustBalance() };
+      })(),
       hd: (() => { const h = st.hd || {}; const setH = (p) => this.setState({ hd: Object.assign({}, this.state.hd, p) }); return { title: h.title || '', amount: h.amount || '', onTitle: (e) => setH({ title: e.target.value }), onAmount: (e) => setH({ amount: e.target.value.replace(/[^0-9.]/g, '') }), save: () => this.addHeld() }; })(),
       recentOpen: !!st.recentOpen, recentAria: st.recentOpen ? 'true' : 'false', recentRot: st.recentOpen ? '180deg' : (rtl ? '0deg' : '0deg'), toggleRecent: () => this.setState({ recentOpen: !this.state.recentOpen }),
       budInput: st.budInput, onBudInput: (e) => this.setState({ budInput: e.target.value.replace(/[^0-9.]/g, '') }), saveCatBudget: () => this.saveCatBudget(),
@@ -3494,7 +3515,7 @@ class Component extends DCLogic {
         ['shareApp', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4']
       ].map((x) => ({ label: t[x[0]], path: x[1], fn: () => this.say(t.soonLink) })),
       hasModal: !!st.modal,
-      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
+      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
       closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null }),
       pinTitle: st.pinStage === 'confirm' ? t.confirmPin : t.setPin, pinErrText: st.pinErr ? (st.locked ? t.wrongPin : t.pinMismatch) : '',
       keypad, pinDots, pinDotsCls: st.pinErr ? 'shake' : '',
