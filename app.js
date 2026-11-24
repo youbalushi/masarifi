@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.3';
-const APP_BUILD = '24';
+const APP_VERSION = '1.8.4';
+const APP_BUILD = '25';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1353,7 +1353,7 @@ class Component extends DCLogic {
     // اللي انصرف بعد نزول الراتب يروح للشهر الجديد
     const moved = st.txns.map((t) => (!t.trip && !t.demo && t.cycle === st.cycle && (t.ts || 0) >= start ? Object.assign({}, t, { cycle: st.cycle + 1 }) : t));
     const old = moved.filter((t) => !t.trip && t.cycle === st.cycle);
-    const spent = old.reduce((a, t) => a + t.amount, 0) + this.plannedFixed();
+    const spent = old.reduce((a, t) => a + t.amount, 0);
     const incomeSum = st.income.filter((x) => !x.once || (x.ts || 0) < start).reduce((a, x) => a + x.amount, 0);
     const leftover = o.balance != null ? Math.max(0, o.balance - o.amount) : Math.max(0, incomeSum - spent);
     let income = st.income.filter((x) => !x.once || (x.ts || 0) >= start);
@@ -1600,7 +1600,7 @@ class Component extends DCLogic {
       return;
     }
     if (incomeSum > 0) {
-      const spent = cyc.reduce((a, t) => a + t.amount, 0) + this.plannedFixed();
+      const spent = cyc.reduce((a, t) => a + t.amount, 0) + this.plannedFixed() - cyc.filter((t) => t.fixedPaid).reduce((a, t) => a + t.amount, 0);
       const proj = spent / this.cycleDays() * 30;
       if (proj > incomeSum) this.nudge('pace' + st.cycle, 'على وتيرة صرفك الحالية بتوصل تقريباً ' + fmt(proj) + ' ⃄ لين الراتب الجاي، وهذا أكثر من دخلك (' + fmt(incomeSum) + '). تبي أرتب لك ميزانية تمشي عليها؟');
     }
@@ -2166,8 +2166,8 @@ class Component extends DCLogic {
     const byCat = {};
     tx.filter((t) => !t.fixedPaid).forEach((t) => addParts(byCat, t));
     const varSum = tx.filter((t) => !t.fixedPaid).reduce((a, t) => a + t.amount, 0);
-    const fixed = this.plannedFixed();
-    if (fixed > 0) byCat.fixed = fixed;
+    tx.filter((t) => t.fixedPaid).forEach((t) => { byCat[t.catId] = (byCat[t.catId] || 0) + t.amount; });
+    const fixed = tx.filter((t) => t.fixedPaid).reduce((a, t) => a + t.amount, 0);
     const spent = varSum + fixed;
     const income = st.income.reduce((a, x) => a + x.amount, 0);
     const merch = {};
@@ -2629,7 +2629,12 @@ class Component extends DCLogic {
     const fixedOnly = st.fixed.reduce((a, f) => a + f.amount, 0);
     const instActive = st.installments.filter((x) => x.total - x.paid > 0.0005);
     const instMonthly = instActive.reduce((a, x) => a + Math.min(x.monthly, x.total - x.paid), 0);
-    const fixedSum = fixedOnly + instMonthly;
+    // المصروف = اللي انصرف فعلاً بس. القسط ينحسب لما يتسدد أو ينقرى من رسالة البنك
+    const cycTx = st.txns.filter((t) => !t.trip && t.cycle === st.cycle);
+    const paidFixed = cycTx.filter((t) => t.fixedPaid).reduce((a, t) => a + t.amount, 0);
+    const instPaid = cycTx.filter((t) => t.catId === 'inst').reduce((a, t) => a + t.amount, 0);
+    const instUnpaid = instActive.filter((x) => !cycTx.some((t) => t.instId === x.id || (t.catId === 'inst' && subNameHit(x.name, t.merchant)))).reduce((a, x) => a + Math.min(x.monthly, x.total - x.paid), 0);
+    const fixedSum = paidFixed;
     const total = varSum + fixedSum;
     const incomeSum = st.income.reduce((a, f) => a + f.amount, 0);
     const spentW = incomeSum > 0 ? Math.min(100, total / incomeSum * 100) : 0;
@@ -2639,7 +2644,7 @@ class Component extends DCLogic {
     normal.forEach((t) => addParts(byCat, t));
     Object.keys(st.budgets).forEach((k) => { if (byCat[k] == null) byCat[k] = 0; });
     if (fixedOnly > 0) byCat.fixed = fixedOnly;
-    if (instMonthly > 0) byCat.inst = instMonthly;
+    cycTx.filter((t) => t.fixedPaid).forEach((t) => { byCat[t.catId] = (byCat[t.catId] || 0) + t.amount; });
     const rows = Object.keys(byCat).map((k) => ({ k, amount: byCat[k] }));
     const tripGroups = {};
     st.txns.forEach((x) => { if (x.trip && x.cycle === st.cycle) tripGroups[x.trip] = (tripGroups[x.trip] || 0) + x.amount; });
@@ -2665,7 +2670,7 @@ class Component extends DCLogic {
     const daysPassed = this.cycleDays();
     const daysInMonth = 30;
     const avg = varSum / daysPassed;
-    const proj = avg * daysInMonth + fixedSum;
+    const proj = avg * daysInMonth + fixedSum + instUnpaid;
     const top = catRowsOnly.length ? (catMap[catRowsOnly[0].k] || catMap.other).ar : '—';
     const insights = [
       { label: 'متوسط الصرف اليومي', value: fmt(avg), unit: '⃄ باليوم' },
@@ -3080,7 +3085,7 @@ class Component extends DCLogic {
     // تقدر تصرف اليوم
     const goalsMonthly = st.goals.reduce((a, g) => a + g.monthly, 0);
     const daysLeft = Math.max(1, 30 - daysPassed + 1);
-    const remainCycle = incomeSum - varSum - fixedSum - goalsMonthly;
+    const remainCycle = incomeSum - total - instUnpaid - fixedOnly - goalsMonthly;
     const safeVal = remainCycle / daysLeft;
     const safe = {
       show: incomeSum > 0, label: safeVal >= 0 ? 'تقدر تصرف اليوم' : 'تعدّيت ميزانية الشهر بـ',
@@ -3229,7 +3234,7 @@ class Component extends DCLogic {
       goHome: () => this.go('home'), goStats: () => this.go('stats'), goTravel: () => this.go('travel'), goMore: () => this.go('more'), goAddIncome: () => this.setState({ screen: 'add', addKind: 'inc' }),
       fabTap: () => (st.screen === 'add' ? this.go('home') : this.setState({ screen: 'add', addKind: 'exp' })),
       monthLabel: AR_M[now.getMonth()] + ' ' + now.getFullYear(),
-      totalStr: fmt(total), fixedStr: fmt(fixedSum), incomeStr: incomeSum > 0 ? fmt(incomeSum) : '—',
+      totalStr: fmt(total), fixedStr: fmt(instPaid), incomeStr: incomeSum > 0 ? fmt(incomeSum) : '—',
       remainStr: incomeSum > 0 ? fmt(incomeSum - total) : '—', noIncome: incomeSum <= 0, spentW: spentW.toFixed(1),
       hasPending: st.pending.length > 0, pendingCount: String(st.pending.length), pendingView: pendingView.map((v, i) => { const p = st.pending[i]; return p && p.newSender ? Object.assign({}, v, { question: '⚠️ أول رسالة توصلني من "' + p.sender + '". تأكد إنها من البنك قبل لا توافق. ' + v.question, bd: '#E0A458' }) : v; }),
       recent: st.txns.filter((x) => !x.trip).slice(0, 8).map(rowOf), noTx: !st.txns.some((x) => !x.trip),
