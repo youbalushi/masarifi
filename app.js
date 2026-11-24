@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.2';
-const APP_BUILD = '23';
+const APP_VERSION = '1.8.3';
+const APP_BUILD = '24';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -2510,7 +2510,7 @@ class Component extends DCLogic {
     if (!a) return;
     const st = this.state;
     this.setState({ screen: 'account', accId: id, accBack: st.screen === 'account' ? st.accBack : st.screen, accDel: false,
-      accForm: { name: a.name || '', bank: a.bank || '', type: a.type || 'acc', last4: a.last4 || '', bal: String(a.balance || 0) } });
+      accForm: { name: a.name || '', bank: a.bank ? bankOf(a.bank).ar : '', type: a.type || 'acc', last4: a.last4 || '', bal: String(a.balance || 0) } });
   }
   accTxOf(a, txns) {
     return (txns || this.state.txns).filter((t) => (a.type === 'cash' ? !!t.cash : (!!t.last4 && !!a.last4 && accMatch({ last4: a.last4 }, t.last4))));
@@ -2521,7 +2521,10 @@ class Component extends DCLogic {
     if (!a) return;
     if (a.type !== 'cash') {
       if (!f.bank.trim()) { this.say('اكتب اسم البنك'); return; }
-      if (!/^\d{4}$/.test(f.last4)) { this.say('اكتب ٤ أرقام بالضبط'); return; }
+      // الحسابات اللي رسائلها ما تبين آخر ٤ أرقام (مثل بنك صحار) رقمها محفوظ بشكل ثاني، فنقبله إذا ما تغيّر
+      if (f.last4 !== a.last4 && !/^\d{4}$/.test(f.last4)) { this.say('اكتب آخر ٤ أرقام من الحساب'); return; }
+      const bk = BANKS.find((b) => b.id !== 'other' && (b.ar === f.bank.trim() || b.short === f.bank.trim() || b.ar.replace(/^(بنك|البنك)\s+/, '') === f.bank.trim().replace(/^(بنك|البنك)\s+/, '') || b.short === f.bank.trim().replace(/^(بنك|البنك)\s+/, '')));
+      if (bk) f.bank = bk.id;
       if (st.accounts.some((x) => x.id !== a.id && x.last4 === f.last4 && x.type !== 'cash')) { this.say('فيه حساب ثاني بنفس الأرقام'); return; }
     }
     const bal = parseFloat(f.bal);
