@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.6';
-const APP_BUILD = '27';
+const APP_VERSION = '1.8.7';
+const APP_BUILD = '28';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -804,11 +804,19 @@ class Component extends DCLogic {
     if (monthly > total) { this.say('القسط الشهري أكبر من الإجمالي'); return; }
     const fd = s.auto ? firstDue(s.due) : null;
     if (s.auto && !fd) { this.say('حدد تاريخ السداد الشهري'); return; }
+    if (s.auto && this.state.accounts.length > 1 && !s.accId) { this.say('اختر الحساب اللي ينخصم منه القسط'); return; }
     const id = this.newId();
-    this.setState({ installments: this.state.installments.concat([{ id, name: s.name.trim(), total, monthly, paid: Math.min(paid, total), dueDay: fd ? fd.day : null, nextDue: fd ? fd.ts : null }]), ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false }, modal: this.state.modal && this.state.modal.type === 'instForm' ? null : this.state.modal });
+    this.setState({ installments: this.state.installments.concat([{ id, name: s.name.trim(), total, monthly, paid: Math.min(paid, total), dueDay: fd ? fd.day : null, nextDue: fd ? fd.ts : null, accId: s.accId || null }]), ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false }, modal: this.state.modal && this.state.modal.type === 'instForm' ? null : this.state.modal });
     this.say(fd ? 'انضاف القسط. بينخصم تلقائي كل شهر يوم ' + fd.day + '، وأول خصم ' + dueLabel(fd.ts) : 'انضاف القسط. سدّده بيدك من بطاقته، أو ينقرى من رسالة البنك');
     this.timers.push(setTimeout(() => this.checkDueInst(), 300));
   }
+  // الحساب اللي ينخصم منه القسط: المختار، أو الحساب الوحيد إذا عندك حساب واحد
+  instAcc(x, accId) {
+    const accs = this.state.accounts;
+    const id = accId || x.accId || (accs.length === 1 ? accs[0].id : null);
+    return id ? accs.find((a) => a.id === id) || null : null;
+  }
+  withInstAcc(tx, a) { return a ? Object.assign(tx, { accId: a.id, last4: a.type === 'cash' ? undefined : a.last4, cash: a.type === 'cash' ? true : undefined }) : tx; }
   // يخصم القسط تلقائياً لما يجي تاريخ استحقاقه
   instTx(x, amount, when, early) {
     const d = new Date(when);
@@ -821,13 +829,15 @@ class Component extends DCLogic {
     if (!st.installments || !st.installments.length) return;
     const now = Date.now();
     const newTx = [];
-    let changed = false;
+    let changed = false, accounts = st.accounts;
     const list = st.installments.map((x) => {
       if (!x.dueDay || !x.nextDue) return x;
       let y = Object.assign({}, x), guard = 0;
+      const ac = this.instAcc(x);
       while (y.nextDue <= now && y.total - y.paid > 0.0005 && guard++ < 24) {
         const amt = Math.round(Math.min(y.monthly, y.total - y.paid) * 1000) / 1000;
-        newTx.push(this.instTx(y, amt, y.nextDue, false));
+        newTx.push(this.withInstAcc(this.instTx(y, amt, y.nextDue, false), ac));
+        if (ac) accounts = this.moveBal(accounts, ac.id, -amt);
         y.paid = Math.min(y.total, Math.round((y.paid + amt) * 1000) / 1000);
         y.lastPaid = y.nextDue;
         y.nextDue = nextDueAfter(y.nextDue, y.dueDay);
@@ -836,23 +846,28 @@ class Component extends DCLogic {
       return y;
     });
     if (!changed) return;
-    this.setState({ installments: list, txns: newTx.reverse().concat(this.state.txns) });
+    this.setState({ installments: list, accounts, txns: newTx.reverse().concat(this.state.txns) });
     const names = newTx.map((t) => t.merchant).filter((v, i, a) => a.indexOf(v) === i);
     this.say(names.length === 1 ? 'انخصم ' + instNm(names[0]) + ' في موعده' : 'انخصمت ' + newTx.length + ' أقساط في موعدها');
   }
-  payInstNow(id) {
+  payInstNow(id, accId) {
     const st = this.state;
     const x = st.installments.find((y) => y.id === id);
     if (!x) return;
     const left = x.total - x.paid;
     if (left <= 0.0005) { this.say('هالقسط مكتمل'); return; }
+    // أكثر من حساب: نسأل من أي حساب ينخصم
+    if (!accId && st.accounts.length > 1) { this.setState({ instPayAsk: id }); return; }
+    const ac = this.instAcc(x, accId);
     const amt = Math.round(Math.min(x.monthly, left) * 1000) / 1000;
+    if (ac && ac.type !== 'card' && amt > availOf(ac) + 0.0005) { this.say('رصيد ' + accLabel(ac) + ' ما يكفي للقسط'); return; }
     const now = Date.now();
-    const tx = this.instTx(x, amt, now, true);
+    const tx = this.withInstAcc(this.instTx(x, amt, now, true), ac);
     const patch = { paid: Math.min(x.total, Math.round((x.paid + amt) * 1000) / 1000), lastPaid: now };
+    if (ac) patch.accId = ac.id;
     if (x.dueDay && x.nextDue) patch.nextDue = nextDueAfter(x.nextDue, x.dueDay);
-    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: [tx].concat(st.txns) });
-    this.say(x.dueDay ? 'سددت ' + instNm(x.name) + ' (' + fmt(amt) + ' ⃄)، والخصم الجاي ' + dueLabel(patch.nextDue || x.nextDue) : 'سددت ' + instNm(x.name));
+    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: [tx].concat(st.txns), accounts: ac ? this.moveBal(st.accounts, ac.id, -amt) : st.accounts, instPayAsk: null });
+    this.say((x.dueDay ? 'سددت ' + instNm(x.name) + ' (' + fmt(amt) + ' ⃄)، والخصم الجاي ' + dueLabel(patch.nextDue || x.nextDue) : 'سددت ' + instNm(x.name)) + (ac ? ' من ' + accLabel(ac) : ''));
   }
   openSubForm(pre) {
     this.setState({ modal: { type: 'subForm' }, subDel: false, sf: Object.assign({ id: null, name: '', amount: '', period: 'm', end: '' }, pre || {}) });
@@ -1166,8 +1181,9 @@ class Component extends DCLogic {
       const d = new Date(x.nextDue), prev = dueAt(d.getFullYear(), d.getMonth() - 1, x.dueDay);
       if (prev > Date.now()) patch.nextDue = prev;
     }
-    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: st.txns.filter((y) => y.id !== txId), instHistDel: null });
-    this.say('انحذفت الدفعة ورجع مبلغها للمتبقي');
+    const back = t.accId && st.accounts.some((a) => a.id === t.accId);
+    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: st.txns.filter((y) => y.id !== txId), instHistDel: null, accounts: back ? this.moveBal(st.accounts, t.accId, t.amount) : st.accounts });
+    this.say('انحذفت الدفعة ورجع مبلغها للمتبقي' + (back ? ' ولرصيد الحساب' : ''));
   }
   setInstDue(id, iso) {
     const fd = firstDue(iso);
@@ -2926,6 +2942,10 @@ class Component extends DCLogic {
         autoOn: !!x.dueDay, autoSw: { bg: x.dueDay ? 'var(--accent)' : 'var(--off)', x: knobX(!!x.dueDay, 20), aria: x.dueDay ? 'true' : 'false' },
         autoSub: x.dueDay ? 'ينخصم تلقائي كل شهر يوم ' + x.dueDay + '، والجاي ' + dueLabel(x.nextDue) : 'مقفل: تسدده بيدك، أو ينقرى من رسالة البنك',
         toggleAuto: () => this.toggleInstAuto(x.id),
+        asking: st.instPayAsk === x.id, notAsking: st.instPayAsk !== x.id, cancelPay: () => this.setState({ instPayAsk: null }),
+        payAccs: st.accounts.map((a) => { const sel = x.accId === a.id; return { label: accLabel(a), bal: fmt(availOf(a)) + ' ⃄', cbg: sel ? 'var(--soft)' : 'var(--surface)', cbd: sel ? 'var(--accent)' : 'var(--line)', pick: () => this.payInstNow(x.id, a.id) }; }),
+        multiAcc: st.accounts.length > 1,
+        autoAccs: st.accounts.map((a) => { const sel = x.accId === a.id; return { label: accLabel(a), cbg: sel ? 'var(--soft)' : 'var(--surface)', cbd: sel ? 'var(--accent)' : 'var(--line)', cfg: sel ? 'var(--accentText)' : 'var(--ink2)', pick: () => { this.setState({ installments: this.state.installments.map((y) => (y.id === x.id ? Object.assign({}, y, { accId: a.id }) : y)) }); this.say('القسط بينخصم من ' + accLabel(a)); } }; }),
         hist: histTx.map((t) => { const d = new Date(t.ts || Date.now()); return { canDel: st.instHistDel !== t.id, asking: st.instHistDel === t.id, ask: () => this.setState({ instHistDel: t.id }), cancel: () => this.setState({ instHistDel: null }), del: () => this.delInstPay(x.id, t.id), date: d.getDate() + ' ' + AR_M[d.getMonth()] + ' ' + d.getFullYear(), amt: fmt(t.amount), how: t.src === 'inst' ? (t.note === 'تسديد قبل الموعد' ? 'سددته قبل الموعد' : 'خصم تلقائي في تاريخ الاستحقاق') : (t.src === 'sms' ? 'من رسالة البنك' + (t.last4 ? ' ••' + t.last4 : '') : 'يدوي') }; }),
         noHist: histTx.length === 0, noHistText: 'ما فيه مدفوعات مسجلة في التطبيق للحين.',
         delAsk: !!st.instDel, delBtn: !st.instDel,
@@ -3344,7 +3364,9 @@ class Component extends DCLogic {
       showAccForm: st.showAccForm, hideAccForm: !st.showAccForm, openAccForm: () => this.setState({ showAccForm: true }),
 
       instView, noInst: st.installments.length === 0, hasInst: st.installments.length > 0, instMonthlyStr: fmt(instMonthly),
-      iv, openInstForm: () => this.setState({ modal: { type: 'instForm' }, ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false } }),
+      iv, openInstForm: () => this.setState({ modal: { type: 'instForm' }, ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false, accId: null } }),
+      insMultiAcc: st.accounts.length > 1,
+      insAccs: st.accounts.map((a) => { const sel = st.ins.accId === a.id; return { label: accLabel(a), cbg: sel ? 'var(--soft)' : 'var(--surface)', cbd: sel ? 'var(--accent)' : 'var(--line)', cfg: sel ? 'var(--accentText)' : 'var(--ink2)', pick: () => this.setState({ ins: Object.assign({}, this.state.ins, { accId: sel ? null : a.id }) }) }; }),
       insAutoSw: { bg: st.ins.auto ? 'var(--accent)' : 'var(--off)', x: knobX(!!st.ins.auto, 20), aria: st.ins.auto ? 'true' : 'false' }, insAuto: !!st.ins.auto, toggleInsAuto: () => this.setState({ ins: Object.assign({}, this.state.ins, { auto: !this.state.ins.auto }) }),
       instSug: ['قسط تلفون', 'قسط سيارة', 'قرض شخصي', 'أثاث', 'تمويل عقاري'].map((l) => ({ label: l, use: () => this.setState({ ins: Object.assign({}, this.state.ins, { name: l }) }) })),
       ins: st.ins, onInsName: setIns('name'), onInsTotal: setIns('total'), onInsMonthly: setIns('monthly'), onInsPaid: setIns('paid'), onInsDue: setIns('due'),
@@ -3527,7 +3549,7 @@ class Component extends DCLogic {
       ].map((x) => ({ label: t[x[0]], path: x[1], fn: () => this.say(t.soonLink) })),
       hasModal: !!st.modal,
       modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
-      closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null }),
+      closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null, instPayAsk: null }),
       pinTitle: st.pinStage === 'confirm' ? t.confirmPin : t.setPin, pinErrText: st.pinErr ? (st.locked ? t.wrongPin : t.pinMismatch) : '',
       keypad, pinDots, pinDotsCls: st.pinErr ? 'shake' : '',
       delText: st.delText, onDelText: (e) => this.setState({ delText: e.target.value }), delDisabled: st.delText.trim() !== t.deleteWord,
