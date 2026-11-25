@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.5';
-const APP_BUILD = '26';
+const APP_VERSION = '1.8.6';
+const APP_BUILD = '27';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1678,6 +1678,14 @@ class Component extends DCLogic {
   componentDidUpdate(pp, ps) {
     try { if (ps.screen !== this.state.screen && this.scrollEl) this.scrollEl.scrollTop = 0; } catch (e) {}
     try { if (ps.txns !== this.state.txns && (this.state.subs || []).length) this.syncSubs(); } catch (e) {}
+    // خانة الرصيد في ملف الحساب تتحدث لما يتغير الرصيد (تحويل، رسالة بنك، تعديل) إذا ما كنت تكتب فيها
+    try {
+      const st = this.state, f = st.accForm;
+      if (st.screen === 'account' && ps.accounts !== st.accounts && f && f.bal === f.bal0) {
+        const a = st.accounts.find((x) => x.id === st.accId);
+        if (a && String(a.balance || 0) !== f.bal0) this.setState({ accForm: Object.assign({}, f, { bal: String(a.balance || 0), bal0: String(a.balance || 0) }) });
+      }
+    } catch (e) {}
     try { if ((ps.txns !== this.state.txns || ps.cycleStart !== this.state.cycleStart) && this.state.cycleSalary) { const nt = this.retagTxns(this.state.txns, this.state.cycle, this.state.cycleStart); if (nt !== this.state.txns) this.setState({ txns: nt }); } } catch (e) {}
     try {
       if (this.state.screen === 'advisor' && this.endEl && (ps.chat !== this.state.chat || ps.screen !== 'advisor')) this.endEl.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -2522,7 +2530,7 @@ class Component extends DCLogic {
     if (!a) return;
     const st = this.state;
     this.setState({ screen: 'account', accId: id, accBack: st.screen === 'account' ? st.accBack : st.screen, accDel: false,
-      accForm: { name: a.name || '', bank: a.bank ? bankOf(a.bank).ar : '', type: a.type || 'acc', last4: a.last4 || '', bal: String(a.balance || 0) } });
+      accForm: { name: a.name || '', bank: a.bank ? bankOf(a.bank).ar : '', type: a.type || 'acc', last4: a.last4 || '', bal: String(a.balance || 0), bal0: String(a.balance || 0) } });
   }
   accTxOf(a, txns) {
     return (txns || this.state.txns).filter((t) => (a.type === 'cash' ? !!t.cash : (!!t.last4 && !!a.last4 && accMatch({ last4: a.last4 }, t.last4))));
@@ -2542,12 +2550,15 @@ class Component extends DCLogic {
     const bal = parseFloat(f.bal);
     if (isNaN(bal)) { this.say('اكتب الرصيد بالأرقام'); return; }
     const oldL4 = a.last4;
-    const patch = { name: f.name.trim(), balance: Math.round(bal * 1000) / 1000 };
+    // الرصيد يتغير بس إذا عدّلته في الخانة. وإلا يبقى زي ما هو (عشان ما يرجع رصيد قديم بعد تحويل أو رسالة بنك)
+    const patch = { name: f.name.trim() };
+    if (f.bal0 == null || f.bal !== f.bal0) patch.balance = Math.round(bal * 1000) / 1000;
     if (a.type !== 'cash') Object.assign(patch, { bank: f.bank.trim(), type: f.type, last4: f.last4 });
     const accounts = st.accounts.map((x) => (x.id === a.id ? Object.assign({}, x, patch) : x));
     // لو تغيرت الأرقام، العمليات القديمة تبقى مربوطة بالحساب
     const txns = (a.type !== 'cash' && oldL4 && oldL4 !== f.last4) ? st.txns.map((t) => (t.last4 && accMatch({ last4: oldL4 }, t.last4) ? Object.assign({}, t, { last4: f.last4 }) : t)) : st.txns;
-    this.setState({ accounts, txns });
+    const na = accounts.find((x) => x.id === a.id);
+    this.setState({ accounts, txns, accForm: Object.assign({}, f, { bal: String(na.balance || 0), bal0: String(na.balance || 0) }) });
     this.say('انحفظت بيانات الحساب');
   }
   deleteAccount() {
