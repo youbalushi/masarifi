@@ -89,7 +89,7 @@ let TIP_IDX = Math.floor(Math.random() * MONEY_TIPS.length);
 try { const k = 'masarifi_tip'; const prev = Number(localStorage.getItem(k)); if (!isNaN(prev) && prev === TIP_IDX) TIP_IDX = (TIP_IDX + 1) % MONEY_TIPS.length; localStorage.setItem(k, String(TIP_IDX)); } catch (e) {}
 const AR_M = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const COUNTRIES = [
-  { code: "OM", ar: "عُمان", cur: "OMR", keys: ["عمان", "سلطنة عمان", "مسقط", "صلالة", "صحار", "نزوى", "صور", "الدقم", "خصب", "مسندم", "البريمي", "عبري", "الرستاق", "ظفار", "الجبل الأخضر", "الجبل الاخضر", "جبل شمس", "السيب", "مطرح", "بركاء", "إبراء", "ابراء", "بهلاء", "سمائل", "الأشخرة", "الاشخرة", "رأس الحد", "مصيرة", "المصنعة", "oman", "muscat", "salalah", "sohar", "nizwa", "duqm", "khasab", "musandam", "dhofar", "buraimi"] },
+  { code: "OM", ar: "عُمان", cur: "OMR", keys: ["عمان", "سلطنة عمان", "مسقط", "صلالة", "صحار", "نزوى", "صور", "الدقم", "خصب", "مسندم", "البريمي", "عبري", "الرستاق", "ظفار", "الجبل الأخضر", "الجبل الاخضر", "جبل شمس", "السيب", "مطرح", "بركاء", "إبراء", "ابراء", "بهلاء", "سمائل", "الأشخرة", "الاشخرة", "رأس الحد", "مصيرة", "المصنعة", "بدية", "رمال الشرقية", "رمال وهيبة", "الحمراء", "إزكي", "ازكي", "أدم", "منح", "قريات", "طيوي", "بمة", "ضلكوت", "رخيوت", "مرباط", "طاقة", "حاسك", "الحلانيات", "شليم", "ثمريت", "هيماء", "محوت", "مدحاء", "شناص", "لوى", "صحم", "الخابورة", "السويق", "وادي بني خالد", "وادي شاب", "جعلان", "الكامل والوافي", "المضيبي", "العامرات", "بوشر", "يتي", "السيفة", "الخيران", "الجبل الأبيض", "مسفاة العبريين", "وادي الطيين", "العوابي", "نخل", "ينقل", "ضنك", "محضة", "المزيونة", "سدح", "الجازر", "حلانيات", "الأشخره", "جزيرة الديمانيات", "الديمانيات", "oman", "muscat", "salalah", "sohar", "nizwa", "duqm", "khasab", "musandam", "dhofar", "buraimi"] },
   { code: "TR", ar: "تركيا", cur: "TRY", keys: ["تركيا", "اسطنبول", "إسطنبول", "انطاليا", "أنطاليا", "طرابزون", "بورصة", "بودروم", "أنقرة", "انقرة", "ازمير", "إزمير", "كبادوكيا", "سبانجا", "أوزنجول", "اوزنجول", "فتحية", "مرمريس", "turkey", "turkiye", "istanbul", "antalya", "trabzon", "bodrum", "ankara", "izmir", "cappadocia", "bursa"] },
   { code: "AE", ar: "الإمارات", cur: "AED", keys: ["الإمارات", "الامارات", "دبي", "أبوظبي", "ابوظبي", "أبو ظبي", "ابو ظبي", "الشارقة", "العين", "رأس الخيمة", "راس الخيمة", "عجمان", "الفجيرة", "خورفكان", "ام القيوين", "dubai", "abu dhabi", "sharjah", "uae", "emirates", "ajman", "fujairah", "ras al khaimah"] },
   { code: "SA", ar: "السعودية", cur: "SAR", keys: ["السعودية", "الرياض", "جدة", "مكة", "المدينة المنورة", "المدينة", "الدمام", "الخبر", "العلا", "الطائف", "أبها", "ابها", "تبوك", "نيوم", "الأحساء", "الاحساء", "saudi", "ksa", "riyadh", "jeddah", "makkah", "mecca", "madinah", "medina", "dammam", "alula", "taif", "abha"] },
@@ -169,7 +169,7 @@ const COUNTRIES = [
 // أسعار تقريبية للعرض فقط (ريال عماني لكل وحدة)؛ في التطبيق الفعلي تتحدث يومياً
 const RATES = {OMR: 1, USD: 0.385, EUR: 0.418, GBP: 0.51, CHF: 0.44, TRY: 0.0112, AED: 0.1048, SAR: 0.1026, QAR: 0.1057, BHD: 1.023, KWD: 1.256, EGP: 0.0079, JOD: 0.543, MAD: 0.039, BAM: 0.214, GEL: 0.142, AZN: 0.226, THB: 0.0118, MYR: 0.087, IDR: 2.37e-05, INR: 0.0045, PKR: 0.00137, LKR: 0.0013, JPY: 0.0026, KES: 0.003, TZS: 0.00015, IQD: 0.000294, TND: 0.124, DZD: 0.00288, CZK: 0.0167, HUF: 0.00105, PLN: 0.096, SEK: 0.036, NOK: 0.035, DKK: 0.056, ISK: 0.0028, RSD: 0.0036, ALL: 0.0042, AMD: 0.00099, RUB: 0.0047, UZS: 3e-05, KZT: 0.00078, KGS: 0.0044, CAD: 0.28, MXN: 0.02, BRL: 0.07, SGD: 0.29, PHP: 0.0066, VND: 1.52e-05, CNY: 0.0535, HKD: 0.0494, KRW: 0.000277, BDT: 0.0032, NPR: 0.0029, SCR: 0.027, MUR: 0.0084, ZAR: 0.021, AUD: 0.25, NZD: 0.23};
 const CUR_AR = { OMR: 'ريال عماني', USD: 'دولار أمريكي', EUR: 'يورو', GBP: 'جنيه إسترليني', CHF: 'فرنك سويسري', TRY: 'ليرة تركية', AED: 'درهم إماراتي', SAR: 'ريال سعودي', QAR: 'ريال قطري', BHD: 'دينار بحريني', KWD: 'دينار كويتي', EGP: 'جنيه مصري', JOD: 'دينار أردني', MAD: 'درهم مغربي', BAM: 'مارك بوسني', GEL: 'لاري جورجي', AZN: 'مانات أذربيجاني', THB: 'بات تايلندي', MYR: 'رينغيت ماليزي', IDR: 'روبية إندونيسية', INR: 'روبية هندية', PKR: 'روبية باكستانية', LKR: 'روبية سريلانكية', JPY: 'ين ياباني', KES: 'شلن كيني', TZS: 'شلن تنزاني', IQD: 'دينار عراقي', TND: 'دينار تونسي', DZD: 'دينار جزائري', CZK: 'كرونة تشيكية', HUF: 'فورنت مجري', PLN: 'زلوتي بولندي', SEK: 'كرونة سويدية', NOK: 'كرونة نرويجية', DKK: 'كرونة دنماركية', ISK: 'كرونة آيسلندية', RSD: 'دينار صربي', ALL: 'ليك ألباني', AMD: 'درام أرميني', RUB: 'روبل روسي', UZS: 'سوم أوزبكي', KZT: 'تينغ كازاخي', KGS: 'سوم قيرغيزي', CAD: 'دولار كندي', MXN: 'بيزو مكسيكي', BRL: 'ريال برازيلي', SGD: 'دولار سنغافوري', PHP: 'بيزو فلبيني', VND: 'دونغ فيتنامي', CNY: 'يوان صيني', HKD: 'دولار هونغ كونغ', KRW: 'وون كوري', BDT: 'تاكا بنغلاديشي', NPR: 'روبية نيبالية', SCR: 'روبية سيشلية', MUR: 'روبية موريشيوسية', ZAR: 'راند جنوب أفريقي', AUD: 'دولار أسترالي', NZD: 'دولار نيوزيلندي' };
-const TOP_CURS = ['USD', 'EUR', 'GBP', 'TRY', 'AED', 'SAR', 'THB', 'MYR', 'GEL', 'INR', 'EGP', 'CHF'];
+const TOP_CURS = ['OMR', 'USD', 'EUR', 'GBP', 'TRY', 'AED', 'SAR', 'THB', 'MYR', 'GEL', 'INR', 'EGP', 'CHF'];
 function normAr(t) {
   return (t || '').toLowerCase().replace(/[\u064B-\u0652\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[^a-z0-9\u0621-\u064A]+/g, ' ').trim();
 }
@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.7';
-const APP_BUILD = '28';
+const APP_VERSION = '1.8.8';
+const APP_BUILD = '29';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -3058,7 +3058,7 @@ class Component extends DCLogic {
       if (ct.from && now < startTs) dayText = 'تبدأ ' + dLabel(ct.from);
       else if (nd) dayText = 'اليوم ' + Math.min(nd, Math.floor((now - startTs) / 86400000) + 1) + ' من ' + nd;
       curTrip = { dest: ct.dest, cur: ct.cur, dates: datesOf(ct) + (nd ? ' · ' + nd + (nd === 1 ? ' يوم' : (nd === 2 ? ' يومين' : ' أيام')) : ''), dayText,
-        total: fmt(tot), local: Math.round(tot / (RATES[ct.cur] || 1)).toLocaleString('en-US'),
+        total: fmt(tot), local: Math.round(tot / (RATES[ct.cur] || 1)).toLocaleString('en-US'), foreign: !!ct.cur && ct.cur !== 'OMR',
         hasBudget: !!ct.budget, pct: ct.budget ? Math.min(100, tot / ct.budget * 100).toFixed(1) : '0',
         budgetText: ct.budget ? 'من ميزانية ' + fmt(ct.budget) + ' ⃄ · باقي ' + fmt(ct.budget - tot) : '',
         overdue: !!(ct.to && now > new Date(ct.to + 'T23:59:59').getTime()), open: () => this.openTrip(ct.id) };
@@ -3076,7 +3076,7 @@ class Component extends DCLogic {
       const elapsed = nd ? (active ? Math.max(1, Math.min(nd, Math.floor((Date.now() - new Date(tr.from + 'T00:00:00').getTime()) / 86400000) + 1)) : nd) : 1;
       td = {
         dest: tr.dest, cur: tr.cur || '', dates: datesOf(tr) + (nd ? ' · ' + nd + (nd === 1 ? ' يوم' : (nd === 2 ? ' يومين' : ' أيام')) : ''), status: active ? 'جارية' : 'انتهت',
-        total: fmt(tot), local: Math.round(tot / (RATES[tr.cur] || 1)).toLocaleString('en-US'),
+        total: fmt(tot), local: Math.round(tot / (RATES[tr.cur] || 1)).toLocaleString('en-US'), foreign: !!tr.cur && tr.cur !== 'OMR',
         hasBudget: !!tr.budget, pct: tr.budget ? Math.min(100, tot / tr.budget * 100).toFixed(1) : '0',
         budgetText: tr.budget ? (tot > tr.budget ? 'تعدّيت الميزانية بـ ' + fmt(tot - tr.budget) + ' ⃄' : 'من ميزانية ' + fmt(tr.budget) + ' ⃄ · باقي ' + fmt(tr.budget - tot)) : '',
         tiles: [{ label: 'متوسط يومي', value: fmt(tot / elapsed) }, { label: 'العمليات', value: String(txs.length) }, { label: 'أكبر فئة', value: Object.keys(tb).length ? (catMap[Object.keys(tb).sort((a, b) => tb[b] - tb[a])[0]] || catMap.other).ar : '—' }],
@@ -3299,7 +3299,7 @@ class Component extends DCLogic {
       },
       tfInfoShow: !!tfCur && (hasDest || st.tf.manual),
       tfDetLabel: st.tf.manual ? 'اخترت العملة بنفسك' : (det ? 'تعرّفت على الوجهة: ' + det.ar : ''),
-      tfCurLabel: tfCur ? CUR_AR[tfCur] + ' (' + tfCur + ') · 1 ' + tfCur + ' ≈ ' + rateStr(RATES[tfCur] || 0) + ' ⃄' : '',
+      tfCurLabel: tfCur ? (tfCur === 'OMR' ? 'ريال عماني · رحلة داخل عُمان، بدون تحويل عملة' : CUR_AR[tfCur] + ' (' + tfCur + ') · 1 ' + tfCur + ' ≈ ' + rateStr(RATES[tfCur] || 0) + ' ⃄') : '',
       tfUnknown: hasDest && !det && !st.tf.manual,
       tfShowChips: st.tfPick || (hasDest && !det && !st.tf.manual),
       tfToggleCur: () => this.setState({ tfPick: !this.state.tfPick }),
