@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.9';
-const APP_BUILD = '30';
+const APP_VERSION = '1.9.0';
+const APP_BUILD = '31';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -2010,6 +2010,26 @@ class Component extends DCLogic {
     if (tf.from && tf.to && tf.to < tf.from) { this.say('تاريخ النهاية قبل البداية'); return; }
     this.setState({ trip: { id: this.newId(), dest: tf.dest.trim(), cur: tf.cur, budget: parseFloat(tf.budget) || 0, from: tf.from || '', to: tf.to || '', active: true, members: [] }, tf: { dest: '', cur: null, budget: '', manual: false, from: '', to: '' }, tfPick: false });
     this.say('بدأت الرحلة، رحلة سعيدة');
+    // الرحلة تبدأ اليوم أو قبل: نسأل عن المصاريف المسجلة من تاريخ البداية
+    const q = String(tf.from || '').split('-').map(Number);
+    if (q.length === 3 && q[0]) {
+      const from = new Date(q[0], q[1] - 1, q[2], 0, 0, 0).getTime();
+      if (from <= Date.now()) {
+        const cand = this.state.txns.filter((t) => !t.trip && !t.fixedPaid && t.catId !== 'inst' && !t.demo && (t.ts || 0) >= from && (t.ts || 0) <= Date.now());
+        if (cand.length) {
+          const sel = {}; cand.forEach((t) => { sel[t.id] = true; });
+          this.setState({ modal: { type: 'tripPast' }, tripPick: { tripId: this.state.trip.id, ids: cand.map((t) => t.id), sel, ask: true, today: isoOf(from) === isoOf(Date.now()) } });
+        }
+      }
+    }
+  }
+  addPastToTrip() {
+    const st = this.state, tp = st.tripPick;
+    if (!tp) return;
+    const ids = tp.ids.filter((id) => tp.sel[id]);
+    if (!ids.length) { this.say('اختر مصروف واحد على الأقل، أو اضغط لا'); return; }
+    this.setState({ txns: st.txns.map((t) => (ids.indexOf(t.id) !== -1 ? Object.assign({}, t, { trip: tp.tripId }) : t)), modal: null, tripPick: null });
+    this.say('انضاف ' + (ids.length === 1 ? 'مصروف واحد' : (ids.length === 2 ? 'مصروفين' : ids.length + ' مصاريف')) + ' للرحلة');
   }
 
   endTrip() {
@@ -3456,6 +3476,24 @@ class Component extends DCLogic {
           save: () => this.doTransfer() }; })(),
       mv: (() => { const m = st.modal && st.modal.type === 'move' ? (st.moves || []).find((x) => x.id === st.modal.id) : null; if (!m) return { rows: [] }; const fa = st.accounts.find((x) => x.id === m.from), ta = st.accounts.find((x) => x.id === m.to);
         return { amt: fmt(m.amount), rows: [{ k: 'من', v: fa ? accLabel(fa) : '—' }, { k: 'إلى', v: ta ? accLabel(ta) : '—' }, { k: 'التاريخ', v: dueLabel(m.ts) + ' ' + new Date(m.ts).getFullYear() }, { k: 'السبب', v: m.note || '—' }], undo: () => this.undoTransfer(m.id) }; })(),
+      tp: (() => {
+        const tp = st.tripPick;
+        if (!tp) return { rows: [], ask: false, pick: false };
+        const cm = {}; CATS.forEach((c) => { cm[c.id] = c; });
+        const rows = tp.ids.map((id) => st.txns.find((t) => t.id === id)).filter(Boolean).map((t) => {
+          const on = !!tp.sel[t.id], c = cm[t.catId] || cm.other || { ar: '', color: '#666', bg: '#eee', ic: 'question' };
+          return { merchant: t.merchant, sub: (t.dateShort || '') + ' · ' + c.ar, amt: fmt(t.amount), on, aria: on ? 'true' : 'false', box: on ? '#2D4A6B' : 'var(--surface)', bd: on ? '#2D4A6B' : 'var(--line)', tick: on ? '1' : '0',
+            toggle: () => this.setState({ tripPick: Object.assign({}, this.state.tripPick, { sel: Object.assign({}, this.state.tripPick.sel, { [t.id]: !on }) }) }) };
+        });
+        const n = rows.filter((r) => r.on).length, tot = tp.ids.filter((id) => tp.sel[id]).reduce((a, id) => { const t = st.txns.find((x) => x.id === id); return a + (t ? t.amount : 0); }, 0);
+        return { rows, ask: !!tp.ask, pick: !tp.ask,
+          q: (tp.today ? 'سجّلت ' : 'من تاريخ بداية الرحلة سجّلت ') + (rows.length === 1 ? 'مصروف واحد' : (rows.length === 2 ? 'مصروفين' : rows.length + ' مصاريف')) + '. تبي تضيفها للرحلة؟',
+          yes: () => this.setState({ tripPick: Object.assign({}, this.state.tripPick, { ask: false }) }),
+          no: () => this.setState({ modal: null, tripPick: null }),
+          all: () => { const sel = {}; tp.ids.forEach((id) => { sel[id] = true; }); this.setState({ tripPick: Object.assign({}, this.state.tripPick, { sel }) }); },
+          none: () => this.setState({ tripPick: Object.assign({}, this.state.tripPick, { sel: {} }) }),
+          btn: n ? 'أضف ' + n + ' للرحلة · ' + fmt(tot) + ' ⃄' : 'اختر من المصاريف', save: () => this.addPastToTrip() };
+      })(),
       adj: (() => {
         const a = st.accounts.find((x) => x.id === st.accId) || { balance: 0 };
         const card = a.type === 'card', v = parseFloat(st.adjAmt), d = isNaN(v) ? 0 : Math.round((v - (a.balance || 0)) * 1000) / 1000;
@@ -3565,7 +3603,7 @@ class Component extends DCLogic {
         ['shareApp', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4']
       ].map((x) => ({ label: t[x[0]], path: x[1], fn: () => this.say(t.soonLink) })),
       hasModal: !!st.modal,
-      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
+      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', tripPast: !!st.modal && st.modal.type === 'tripPast', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
       closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null, instPayAsk: null }),
       pinTitle: st.pinStage === 'confirm' ? t.confirmPin : t.setPin, pinErrText: st.pinErr ? (st.locked ? t.wrongPin : t.pinMismatch) : '',
       keypad, pinDots, pinDotsCls: st.pinErr ? 'shake' : '',
