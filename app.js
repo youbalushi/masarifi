@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.0';
-const APP_BUILD = '31';
+const APP_VERSION = '1.9.1';
+const APP_BUILD = '32';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -2710,7 +2710,14 @@ class Component extends DCLogic {
     const fixedSum = paidFixed;
     const total = varSum + fixedSum;
     const incomeSum = st.income.reduce((a, f) => a + f.amount, 0);
-    const spentW = incomeSum > 0 ? Math.min(100, total / incomeSum * 100) : 0;
+    // مصاريف الرحلات في هالشهر تدخل في الإجمالي (وتبان لحالها في صفحة الرحلة)
+    const tripCycTx = st.txns.filter((t) => t.trip && t.cycle === st.cycle);
+    const tripCycSum = tripCycTx.reduce((a, t) => a + t.amount, 0);
+    const tripNames = [];
+    if (st.trip && st.trip.active !== false) tripNames.push(st.trip.dest);
+    tripCycTx.forEach((t) => { const tr = (st.trip && st.trip.id === t.trip) ? st.trip : (st.trips || []).find((x) => x.id === t.trip); if (tr && tripNames.indexOf(tr.dest) === -1) tripNames.push(tr.dest); });
+    const allSpent = total + tripCycSum;
+    const spentW = incomeSum > 0 ? Math.min(100, allSpent / incomeSum * 100) : 0;
 
     // stats
     const byCat = {};
@@ -3166,7 +3173,7 @@ class Component extends DCLogic {
     // تقدر تصرف اليوم
     const goalsMonthly = st.goals.reduce((a, g) => a + g.monthly, 0);
     const daysLeft = Math.max(1, 30 - daysPassed + 1);
-    const remainCycle = incomeSum - total - instUnpaid - fixedOnly - goalsMonthly;
+    const remainCycle = incomeSum - allSpent - instUnpaid - fixedOnly - goalsMonthly;
     const safeVal = remainCycle / daysLeft;
     const safe = {
       show: incomeSum > 0, label: safeVal >= 0 ? 'تقدر تصرف اليوم' : 'تعدّيت ميزانية الشهر بـ',
@@ -3315,8 +3322,8 @@ class Component extends DCLogic {
       goHome: () => this.go('home'), goStats: () => this.go('stats'), goTravel: () => this.go('travel'), goMore: () => this.go('more'), goAddIncome: () => this.setState({ screen: 'add', addKind: 'inc' }),
       fabTap: () => (st.screen === 'add' ? this.go('home') : this.setState({ screen: 'add', addKind: 'exp' })),
       monthLabel: AR_M[now.getMonth()] + ' ' + now.getFullYear(),
-      totalStr: fmt(total), fixedStr: fmt(instPaid), incomeStr: incomeSum > 0 ? fmt(incomeSum) : '—',
-      remainStr: incomeSum > 0 ? fmt(incomeSum - total) : '—', noIncome: incomeSum <= 0, spentW: spentW.toFixed(1),
+      totalStr: fmt(allSpent), fixedStr: fmt(instPaid), incomeStr: incomeSum > 0 ? fmt(incomeSum) : '—',
+      remainStr: incomeSum > 0 ? fmt(incomeSum - allSpent) : '—', noIncome: incomeSum <= 0, spentW: spentW.toFixed(1),
       hasPending: st.pending.length > 0, pendingCount: String(st.pending.length), pendingView: pendingView.map((v, i) => { const p = st.pending[i]; return p && p.newSender ? Object.assign({}, v, { question: '⚠️ أول رسالة توصلني من "' + p.sender + '". تأكد إنها من البنك قبل لا توافق. ' + v.question, bd: '#E0A458' }) : v; }),
       recent: st.txns.filter((x) => !x.trip).slice(0, 8).map(rowOf), noTx: !st.txns.some((x) => !x.trip),
       tripOn, tripOff: !tripOn, tripDest: trip ? trip.dest : '', tripCur: trip ? trip.cur : '',
@@ -3411,7 +3418,7 @@ class Component extends DCLogic {
       addInstallment: () => this.addInstallment(), passMonth: () => this.passMonth(),
 
       arrive: () => this.arrive(),  approveAll: () => this.approveAll(), suggestCount: String(sugN), hasManySuggest: sugN >= 2,
-      cycleRange: 'من ' + st.cycleStartLabel, cycleNote: st.cycleSalary ? 'نزول الراتب' : 'يبدأ شهر جديد لما ينزل راتبك',
+      cycleRange: 'من ' + st.cycleStartLabel, cycleNote: tripNames.length ? 'من ضمنها ' + (tripNames.length === 1 ? 'رحلة ' + tripNames[0] : 'رحلات ' + tripNames.join(' و')) : (st.cycleSalary ? '' : 'يبدأ شهر جديد لما ينزل راتبك'), hasCycleNote: !!tripNames.length || !st.cycleSalary,
       hasSavingsOffer: !!st.savingsOffer, savingsAmt: st.savingsOffer ? fmt(st.savingsOffer.amount) : '',
       savingsHasAcc: !!savTarget, savingsNoAcc: !savTarget,
       savingsHint: (() => { const s = savTarget; return s ? 'حوّله لحساب الادخار في ' + bankOf(s.bank).ar + ' قبل لا تبدأ تصرف' : 'افتح حساب ادخار منفصل وأضفه هنا، وأتابعه لك'; })(),
