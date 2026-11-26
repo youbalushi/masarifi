@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.1';
-const APP_BUILD = '32';
+const APP_VERSION = '1.9.2';
+const APP_BUILD = '33';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1308,6 +1308,22 @@ class Component extends DCLogic {
     this.setState({ ignoredAccs: (this.state.ignoredAccs || []).filter((g) => g.digits !== d) });
     this.say('رجعت أقرأ رسائل حساب •••• ' + d + '. لما توصل رسالة منه بسألك تضيفه');
   }
+  // تعديل عملية قبل الموافقة عليها
+  openPendEdit(pid) {
+    const p = this.state.pending.find((x) => x.id === pid);
+    if (!p) return;
+    this.setState({ modal: { type: 'pendEdit' }, pe: { id: pid, amount: String(p.amount || ''), merchant: p.merchant || '', catId: p.catId || null, note: p.userNote || '' } });
+  }
+  savePendEdit() {
+    const st = this.state, e = st.pe || {}, p = st.pending.find((x) => x.id === e.id);
+    if (!p) { this.setState({ modal: null }); return; }
+    const amt = parseFloat(e.amount);
+    if (!(amt > 0)) { this.say('اكتب المبلغ'); return; }
+    if (!e.catId) { this.say('اختر الفئة'); return; }
+    const np = Object.assign({}, p, { amount: Math.round(amt * 1000) / 1000, merchant: (e.merchant || '').trim() || p.merchant, userNote: (e.note || '').trim() });
+    this.setState({ pending: st.pending.map((x) => (x.id === p.id ? np : x)), modal: null, pe: null });
+    this.approveCat(p.id, e.catId);
+  }
   approveCat(pid, catId, seasonOv) {
     const st = this.state;
     const p = st.pending.find((x) => x.id === pid);
@@ -1316,6 +1332,7 @@ class Component extends DCLogic {
     let extra = '';
     if (p.kind === 'unclear' || (p.kind === 'suggest' && p.catId !== catId)) { learned[p.merchant.split(' · ')[0].toLowerCase()] = catId; extra = ' · بتذكر ' + p.merchant + ' المرة الجاية'; }
     const tx = { ts: Date.now(), id: p.id, amount: p.amount, merchant: p.kind === 'transfer' ? 'تحويل · ' + this.catAr(catId) : p.merchant, catId, dateShort: p.dateShort, src: 'sms', trip: this.tripIdNow(), cycle: st.cycle, ts: p.ts || Date.now(), last4: p.last4, seasonId: this.seasonPick(catId, seasonOv != null ? seasonOv : p.season) };
+    if (p.userNote) tx.note = p.userNote;
     const txns = [tx].concat(st.txns);
     this.setState({ pending: st.pending.filter((x) => x.id !== pid), txns, learned, accounts: this.balUpdated(st.accounts, p.last4, p.balance), expanded: null });
     this.say('تمام، انضافت في ' + this.catAr(catId) + (tx.seasonId ? ' · من ميزانية ' + this.seasonName() : '') + extra);
@@ -2789,12 +2806,12 @@ class Component extends DCLogic {
         question = 'أظنها ' + sc.ar + '. أضيفها؟';
         path = ICONS[sc.ic]; tone = 'cat'; showChips = exp;
         A('أضف · ' + sc.ar, () => this.approveCat(p.id, p.catId), true);
-        A(exp ? 'إخفاء الفئات' : 'غيّر الفئة', () => this.setState({ expanded: exp ? null : p.id }));
+        A('تعديل', () => this.openPendEdit(p.id));
         A('تجاهل', ign);
       } else if (k === 'unclear') {
         sub = 'غير واضح من الرسالة · ' + d;
         question = p.note + ' وش نوعه؟';
-        showChips = true; A('تجاهل', ign);
+        showChips = true; A('تعديل', () => this.openPendEdit(p.id)); A('تجاهل', ign);
       } else if (k === 'transfer') {
         title = 'تحويل من حسابك ••' + p.last4; sub = 'عبر mBanking · ' + d;
         question = 'هالتحويل حق إيش؟'; path = ICONS.swap; showChips = true;
@@ -3483,6 +3500,14 @@ class Component extends DCLogic {
           save: () => this.doTransfer() }; })(),
       mv: (() => { const m = st.modal && st.modal.type === 'move' ? (st.moves || []).find((x) => x.id === st.modal.id) : null; if (!m) return { rows: [] }; const fa = st.accounts.find((x) => x.id === m.from), ta = st.accounts.find((x) => x.id === m.to);
         return { amt: fmt(m.amount), rows: [{ k: 'من', v: fa ? accLabel(fa) : '—' }, { k: 'إلى', v: ta ? accLabel(ta) : '—' }, { k: 'التاريخ', v: dueLabel(m.ts) + ' ' + new Date(m.ts).getFullYear() }, { k: 'السبب', v: m.note || '—' }], undo: () => this.undoTransfer(m.id) }; })(),
+      pe: (() => {
+        const e = st.pe || {};
+        const setE = (q) => this.setState({ pe: Object.assign({}, this.state.pe, q) });
+        return { amount: e.amount || '', merchant: e.merchant || '', note: e.note || '',
+          onAmount: (ev) => setE({ amount: ev.target.value.replace(/[^0-9.]/g, '') }), onMerchant: (ev) => setE({ merchant: ev.target.value }), onNote: (ev) => setE({ note: ev.target.value }),
+          chips: CATS.filter((c) => c.id !== 'inst' || true).map((c) => { const sel = e.catId === c.id; return { ar: c.ar, path: ICONS[c.ic], ic: sel ? c.color : 'var(--muted)', cbg: sel ? c.bg : 'var(--surface)', cfg: sel ? c.color : 'var(--ink2)', cbd: sel ? c.color : 'var(--line)', pick: () => setE({ catId: c.id }) }; }),
+          save: () => this.savePendEdit() };
+      })(),
       tp: (() => {
         const tp = st.tripPick;
         if (!tp) return { rows: [], ask: false, pick: false };
@@ -3610,7 +3635,7 @@ class Component extends DCLogic {
         ['shareApp', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4']
       ].map((x) => ({ label: t[x[0]], path: x[1], fn: () => this.say(t.soonLink) })),
       hasModal: !!st.modal,
-      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', tripPast: !!st.modal && st.modal.type === 'tripPast', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
+      modal: { transfer: !!st.modal && st.modal.type === 'transfer', move: !!st.modal && st.modal.type === 'move', hold: !!st.modal && st.modal.type === 'hold', tripPast: !!st.modal && st.modal.type === 'tripPast', pendEdit: !!st.modal && st.modal.type === 'pendEdit', adjBal: !!st.modal && st.modal.type === 'adjBal', signOut: !!st.modal && st.modal.type === 'signOut', instForm: !!st.modal && st.modal.type === 'instForm', goal: !!st.modal && st.modal.type === 'goal', goalForm: !!st.modal && st.modal.type === 'goalForm', inst: !!st.modal && st.modal.type === 'inst', subForm: !!st.modal && st.modal.type === 'subForm', sub: !!st.modal && st.modal.type === 'sub', tx: !!st.modal && st.modal.type === 'tx', report: !!st.modal && st.modal.type === 'report', profile: !!st.modal && st.modal.type === 'profile', pin: !!st.modal && st.modal.type === 'pin', deleteAll: !!st.modal && st.modal.type === 'deleteAll', restoreDrive: !!st.modal && st.modal.type === 'restoreDrive', shareTrip: !!st.modal && st.modal.type === 'shareTrip' },
       closeModal: () => this.setState({ modal: null, pinBuf: '', pinErr: false, pinStage: null, txEdit: null, instPayAsk: null }),
       pinTitle: st.pinStage === 'confirm' ? t.confirmPin : t.setPin, pinErrText: st.pinErr ? (st.locked ? t.wrongPin : t.pinMismatch) : '',
       keypad, pinDots, pinDotsCls: st.pinErr ? 'shake' : '',
