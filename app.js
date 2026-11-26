@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.2';
-const APP_BUILD = '33';
+const APP_VERSION = '1.9.3';
+const APP_BUILD = '34';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -805,6 +805,17 @@ class Component extends DCLogic {
     const fd = s.auto ? firstDue(s.due) : null;
     if (s.auto && !fd) { this.say('حدد تاريخ السداد الشهري'); return; }
     if (s.auto && this.state.accounts.length > 1 && !s.accId) { this.say('اختر الحساب اللي ينخصم منه القسط'); return; }
+    if (s.editId) {
+      const x = this.state.installments.find((y) => y.id === s.editId);
+      if (!x) return;
+      const keepDue = fd && x.dueDay && x.nextDue && isoOf(x.nextDue) === s.due;
+      const upd = Object.assign({}, x, { name: s.name.trim(), total, monthly, paid: Math.min(paid, total), accId: s.accId || null,
+        dueDay: fd ? fd.day : null, nextDue: fd ? (keepDue ? x.nextDue : fd.ts) : null });
+      this.setState({ installments: this.state.installments.map((y) => (y.id === x.id ? upd : y)), modal: { type: 'inst', id: x.id }, ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false, accId: null } });
+      this.say('انحفظت تعديلات ' + instNm(upd.name));
+      this.timers.push(setTimeout(() => this.checkDueInst(), 300));
+      return;
+    }
     const id = this.newId();
     this.setState({ installments: this.state.installments.concat([{ id, name: s.name.trim(), total, monthly, paid: Math.min(paid, total), dueDay: fd ? fd.day : null, nextDue: fd ? fd.ts : null, accId: s.accId || null }]), ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false }, modal: this.state.modal && this.state.modal.type === 'instForm' ? null : this.state.modal });
     this.say(fd ? 'انضاف القسط. بينخصم تلقائي كل شهر يوم ' + fd.day + '، وأول خصم ' + dueLabel(fd.ts) : 'انضاف القسط. سدّده بيدك من بطاقته، أو ينقرى من رسالة البنك');
@@ -3006,6 +3017,7 @@ class Component extends DCLogic {
         hist: histTx.map((t) => { const d = new Date(t.ts || Date.now()); return { canDel: st.instHistDel !== t.id, asking: st.instHistDel === t.id, ask: () => this.setState({ instHistDel: t.id }), cancel: () => this.setState({ instHistDel: null }), del: () => this.delInstPay(x.id, t.id), date: d.getDate() + ' ' + AR_M[d.getMonth()] + ' ' + d.getFullYear(), amt: fmt(t.amount), how: t.src === 'inst' ? (t.note === 'تسديد قبل الموعد' ? 'سددته قبل الموعد' : 'خصم تلقائي في تاريخ الاستحقاق') : (t.src === 'sms' ? 'من رسالة البنك' + (t.last4 ? ' ••' + t.last4 : '') : 'يدوي') }; }),
         noHist: histTx.length === 0, noHistText: 'ما فيه مدفوعات مسجلة في التطبيق للحين.',
         delAsk: !!st.instDel, delBtn: !st.instDel,
+        edit: () => this.setState({ modal: { type: 'instForm' }, ins: { editId: x.id, name: x.name, total: String(x.total), monthly: String(x.monthly), paid: String(x.paid || 0), due: x.nextDue ? isoOf(x.nextDue) : '', auto: !!x.dueDay, accId: x.accId || null } }),
         askDel: () => this.setState({ instDel: true }), delCancel: () => this.setState({ instDel: false }),
         del: () => { this.setState({ installments: this.state.installments.filter((y) => y.id !== x.id), modal: null, instDel: false }); this.say('انحذف ' + instNm(x.name)); }
       });
@@ -3427,6 +3439,8 @@ class Component extends DCLogic {
       instView, noInst: st.installments.length === 0, hasInst: st.installments.length > 0, instMonthlyStr: fmt(instMonthly),
       iv, openInstForm: () => this.setState({ modal: { type: 'instForm' }, ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false, accId: null } }),
       insMultiAcc: st.accounts.length > 1,
+      insTitle: st.ins.editId ? 'تعديل القسط' : 'قسط جديد',
+      insCancel: () => this.setState(st.ins.editId ? { modal: { type: 'inst', id: st.ins.editId }, ins: { name: '', total: '', monthly: '', paid: '', due: '', auto: false, accId: null } } : { modal: null }),
       insAccs: st.accounts.map((a) => { const sel = st.ins.accId === a.id; return { label: accLabel(a), cbg: sel ? 'var(--soft)' : 'var(--surface)', cbd: sel ? 'var(--accent)' : 'var(--line)', cfg: sel ? 'var(--accentText)' : 'var(--ink2)', pick: () => this.setState({ ins: Object.assign({}, this.state.ins, { accId: sel ? null : a.id }) }) }; }),
       insAutoSw: { bg: st.ins.auto ? 'var(--accent)' : 'var(--off)', x: knobX(!!st.ins.auto, 20), aria: st.ins.auto ? 'true' : 'false' }, insAuto: !!st.ins.auto, toggleInsAuto: () => this.setState({ ins: Object.assign({}, this.state.ins, { auto: !this.state.ins.auto }) }),
       instSug: ['قسط تلفون', 'قسط سيارة', 'قرض شخصي', 'أثاث', 'تمويل عقاري'].map((l) => ({ label: l, use: () => this.setState({ ins: Object.assign({}, this.state.ins, { name: l }) }) })),
