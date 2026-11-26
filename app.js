@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.8.8';
-const APP_BUILD = '29';
+const APP_VERSION = '1.8.9';
+const APP_BUILD = '30';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -2019,8 +2019,21 @@ class Component extends DCLogic {
     this.setState({ trip: null, trips: this.state.trips.concat([done]), screen: 'trip', tripView: tr.id, tripBackScreen: 'travel' });
     this.say('الحمدلله على السلامة، هذا ملخص رحلتك');
   }
+  // حذف رحلة: مع مصاريفها، أو تخلي المصاريف وترجع مصاريف عادية
+  deleteTrip(id, withTx) {
+    const st = this.state;
+    const isCur = !!(st.trip && st.trip.id === id);
+    const tr = isCur ? st.trip : (st.trips || []).find((x) => x.id === id);
+    if (!tr) return;
+    if (isCur && tr.cloudKey && this.stopShareTrip) { try { this.stopShareTrip(); } catch (e) {} }
+    const n = st.txns.filter((t) => t.trip === id).length;
+    const txns = withTx ? st.txns.filter((t) => t.trip !== id) : st.txns.map((t) => (t.trip === id ? Object.assign({}, t, { trip: false }) : t));
+    this.setState({ trip: isCur ? null : this.state.trip, trips: (st.trips || []).filter((x) => x.id !== id), txns, screen: 'travel', tripView: null, tripDel: false,
+      txFilter: st.txFilter && st.txFilter.tripId === id ? Object.assign({}, st.txFilter, { tripId: null }) : st.txFilter });
+    this.say('انحذفت رحلة ' + tr.dest + (n ? (withTx ? ' ومصاريفها' : '، ومصاريفها (' + n + ') رجعت مصاريف عادية') : ''));
+  }
   openTrip(id) {
-    this.setState({ screen: 'trip', tripView: id, tripBackScreen: this.state.screen === 'trip' ? this.state.tripBackScreen : this.state.screen });
+    this.setState({ screen: 'trip', tripView: id, tripDel: false, tripBackScreen: this.state.screen === 'trip' ? this.state.tripBackScreen : this.state.screen });
   }
 
   addIncome() {
@@ -3082,7 +3095,11 @@ class Component extends DCLogic {
         tiles: [{ label: 'متوسط يومي', value: fmt(tot / elapsed) }, { label: 'العمليات', value: String(txs.length) }, { label: 'أكبر فئة', value: Object.keys(tb).length ? (catMap[Object.keys(tb).sort((a, b) => tb[b] - tb[a])[0]] || catMap.other).ar : '—' }],
         cats: Object.keys(tb).sort((a, b) => tb[b] - tb[a]).map((k, i) => { const c = catMap[k] || catMap.other; const pc = tot > 0 ? tb[k] / tot * 100 : 0; return { ar: c.ar, color: c.color, amt: fmt(tb[k]), pct: Math.round(pc), w: Math.max(3, pc).toFixed(1), delay: 100 + i * 60, open: () => this.openTxList(k, tr.id) }; }),
         rows: txs.map(rowOf), empty: txs.length === 0,
-        hasMembers: !!(tr.members && tr.members.length), members: (tr.members || []).map((m) => ({ email: m, initial: m.charAt(0).toUpperCase() }))
+        hasMembers: !!(tr.members && tr.members.length), members: (tr.members || []).map((m) => ({ email: m, initial: m.charAt(0).toUpperCase() })),
+        delBtn: !st.tripDel, delAsk: !!st.tripDel, hasTx: txs.length > 0, noTx: txs.length === 0,
+        delNote: txs.length ? 'تحذف الرحلة؟ فيها ' + txs.length + (txs.length === 1 ? ' مصروف' : (txs.length === 2 ? ' مصروفين' : ' مصاريف')) + ' بمجموع ' + fmt(tot) + ' ⃄.' : 'تحذف الرحلة؟',
+        askDel: () => this.setState({ tripDel: true }), cancelDel: () => this.setState({ tripDel: false }),
+        delAll: () => this.deleteTrip(st.tripView, true), delKeep: () => this.deleteTrip(st.tripView, false)
       };
     }
     const txf = st.txFilter;
