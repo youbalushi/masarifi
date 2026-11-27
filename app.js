@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.7';
-const APP_BUILD = '38';
+const APP_VERSION = '1.9.8';
+const APP_BUILD = '39';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1300,6 +1300,13 @@ class Component extends DCLogic {
         pending.splice(mi, 1);
         item = { id, kind: 'internal', amount: p.amount, dateShort: p.dateShort, fromLast4: from.last4, toLast4: to.last4, fromBal: from.balance, toBal: to.balance, debit: from, credit: to };
       }
+    }
+    // رسالة ما فيها الرصيد (مثل رسائل البطاقة وبنك صحار): نخصم المبلغ أو نضيفه للرصيد على طول
+    // إلا إذا العملية نفسها انسجلت قبل وانخصمت (مكررة، أو مسجلة بيدك، أو قسط سددته من التطبيق)
+    if (acc && p.balance == null && !item.dupKind && p.amount > 0 && (!p.cur || p.cur === 'OMR')) {
+      const sign = (p.kind === 'credit' || p.kind === 'refund') ? 1 : -1;
+      this.setState({ accounts: this.moveBal(this.state.accounts, acc.id, sign * p.amount) });
+      item.balRel = sign;
     }
     const npend = [item].concat(pending);
     this.setState({ pending: npend, smsText: '', catPick: null });
