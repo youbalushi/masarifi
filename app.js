@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.5';
-const APP_BUILD = '36';
+const APP_VERSION = '1.9.6';
+const APP_BUILD = '37';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -833,7 +833,17 @@ class Component extends DCLogic {
     const d = new Date(when);
     return { id: this.newId(), ts: when, amount, merchant: x.name, catId: 'inst', dateShort: d.getDate() + ' ' + AR_M[d.getMonth()], src: 'inst', instId: x.id, trip: false, cycle: this.state.cycle, fixedPaid: true, note: early ? 'تسديد قبل الموعد' : 'خصم تلقائي في تاريخ الاستحقاق' };
   }
+  cleanInstPending() {
+    const st = this.state;
+    const stale = st.pending.filter((x) => x.kind === 'inst').filter((x) => {
+      const ins = st.installments.find((y) => y.id === x.instId) || (!x.instId ? st.installments.find((y) => y.name === x.merchant) : null);
+      if (!ins || ins.total - ins.paid <= 0.0005) return true;
+      return st.txns.some((t) => t.instId === ins.id && t.cycle === st.cycle && (t.ts || 0) >= (x.ts || 0));
+    });
+    if (stale.length) this.setState({ pending: st.pending.filter((x) => stale.indexOf(x) === -1) });
+  }
   checkDueInst() {
+    try { this.cleanInstPending(); } catch (e) {}
     try { this.syncSubs(); } catch (e) {}
     try { this.checkDueGoals(); } catch (e) {}
     const st = this.state;
@@ -1723,17 +1733,7 @@ class Component extends DCLogic {
     try { if (ps.screen !== this.state.screen && this.scrollEl) this.scrollEl.scrollTop = 0; } catch (e) {}
     try { if (ps.txns !== this.state.txns && (this.state.subs || []).length) this.syncSubs(); } catch (e) {}
     // تذكير القسط ينشال لحاله إذا القسط اكتمل أو انحذف أو تسدد هالشهر
-    try {
-      const st = this.state;
-      if (ps.installments !== st.installments || ps.txns !== st.txns || ps.pending !== st.pending) {
-        const stale = st.pending.filter((x) => x.kind === 'inst').filter((x) => {
-          const ins = st.installments.find((y) => y.id === x.instId);
-          if (!ins || ins.total - ins.paid <= 0.0005) return true;
-          return st.txns.some((t) => t.instId === ins.id && t.cycle === st.cycle && (t.ts || 0) >= (x.ts || 0));
-        });
-        if (stale.length) this.setState({ pending: st.pending.filter((x) => stale.indexOf(x) === -1) });
-      }
-    } catch (e) {}
+    try { if (ps.installments !== this.state.installments || ps.txns !== this.state.txns || ps.pending !== this.state.pending) this.cleanInstPending(); } catch (e) {}
     // خانة الرصيد في ملف الحساب تتحدث لما يتغير الرصيد (تحويل، رسالة بنك، تعديل) إذا ما كنت تكتب فيها
     try {
       const st = this.state, f = st.accForm;
