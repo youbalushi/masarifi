@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.6';
-const APP_BUILD = '37';
+const APP_VERSION = '1.9.7';
+const APP_BUILD = '38';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -883,11 +883,13 @@ class Component extends DCLogic {
     const amt = Math.round(Math.min(x.monthly, left) * 1000) / 1000;
     if (ac && ac.type !== 'card' && amt > availOf(ac) + 0.0005) { this.say('رصيد ' + accLabel(ac) + ' ما يكفي للقسط'); return; }
     const now = Date.now();
+    // لو البنك خصمه وانقرت رسالته قبل (والرصيد اتحدث منها)، ما نخصمه من الرصيد مرة ثانية
+    const bankDid = ac && st.txns.concat(st.pending).some((t) => (t.src === 'sms' || t.kind) && Math.abs((t.amount || 0) - amt) < 0.0015 && (t.ts || 0) > now - 5 * 86400000 && (!t.last4 || !ac.last4 || accMatch(ac, t.last4)) && (t.catId === 'inst' || t.kind === 'suggest' || t.kind === 'unclear' || t.kind === 'transfer'));
     const tx = this.withInstAcc(this.instTx(x, amt, now, true), ac);
     const patch = { paid: Math.min(x.total, Math.round((x.paid + amt) * 1000) / 1000), lastPaid: now };
     if (ac) patch.accId = ac.id;
     if (x.dueDay && x.nextDue) patch.nextDue = nextDueAfter(x.nextDue, x.dueDay);
-    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: [tx].concat(st.txns), accounts: ac ? this.moveBal(st.accounts, ac.id, -amt) : st.accounts, instPayAsk: null });
+    this.setState({ installments: st.installments.map((y) => (y.id === id ? Object.assign({}, y, patch) : y)), txns: [tx].concat(st.txns), accounts: ac && !bankDid ? this.moveBal(st.accounts, ac.id, -amt) : st.accounts, instPayAsk: null });
     this.say((x.dueDay ? 'سددت ' + instNm(x.name) + ' (' + fmt(amt) + ' ⃄)، والخصم الجاي ' + dueLabel(patch.nextDue || x.nextDue) : 'سددت ' + instNm(x.name)) + (ac ? ' من ' + accLabel(ac) : ''));
   }
   openSubForm(pre) {
@@ -966,7 +968,7 @@ class Component extends DCLogic {
     const nb = Math.round(v * 1000) / 1000, old = a.balance || 0;
     if (Math.abs(nb - old) < 0.0005) { this.setState({ modal: null }); return; }
     const log = (a.adjLog || []).concat([{ ts: Date.now(), from: old, to: nb }]).slice(-20);
-    this.setState({ accounts: st.accounts.map((x) => (x.id === a.id ? Object.assign({}, x, { balance: nb, adjLog: log }) : x)), modal: null, adjAmt: '' });
+    this.setState({ accounts: st.accounts.map((x) => (x.id === a.id ? Object.assign({}, x, { balance: nb, adjLog: log, balTs: Date.now() }) : x)), modal: null, adjAmt: '' });
     this.say('تعدّل الرصيد من ' + fmt(old) + ' إلى ' + fmt(nb) + ' ⃄');
   }
   // ===== عزل مبلغ =====
@@ -1227,15 +1229,18 @@ class Component extends DCLogic {
   }
 
   // ===== رصد الرسائل والموافقة =====
-  balUpdated(accounts, last4, bal) {
+  // الرصيد من رسالة البنك: ما نرجع لرصيد أقدم من آخر رصيد انسجل (لو وافقت على رسائل بغير ترتيبها)
+  balUpdated(accounts, last4, bal, ts) {
     if (!last4 || bal == null) return accounts;
-    return accounts.map((a) => (accMatch(a, last4) ? Object.assign({}, a, { balance: bal }) : a));
+    const t = ts || Date.now();
+    return accounts.map((a) => (accMatch(a, last4) && !(a.balTs && t < a.balTs) ? Object.assign({}, a, { balance: bal, balTs: t }) : a));
   }
   arrive(textArg, base) {
     const st = Object.assign({}, this.state, base || {});
     if (typeof textArg === 'string') st.smsText = textArg;
     const p = parseSms(st.smsText, st.learned, st.accounts);
     if (!p || !p.ok) return;
+    if (!p.ts) p.ts = Date.now();
     if (p.accDigits && !p.accId) {
       if (ignoredHit(st.ignoredAccs, p.accDigits)) { this.setState({ smsText: '' }); return; }
       const key = p.newKey;
@@ -1256,6 +1261,8 @@ class Component extends DCLogic {
     }
     const acc = p.last4 ? st.accounts.find((a) => accMatch(a, p.last4)) : null;
     if (acc && !acc.watch) { this.say('قراءة هذا الحساب متوقفة، فما رصدت الرسالة'); return; }
+    // الرصيد اللي في الرسالة هو الرصيد الفعلي في البنك: يتحدث على طول، حتى لو تجاهلت العملية
+    if (acc && p.balance != null) { const na = this.balUpdated(this.state.accounts, p.last4, p.balance, p.ts); if (na !== this.state.accounts) { this.setState({ accounts: na }); st.accounts = na; } }
     const id = this.newId();
     let item = toPending(p, id);
     const pending = st.pending.slice();
@@ -1355,7 +1362,7 @@ class Component extends DCLogic {
     const tx = { ts: Date.now(), id: p.id, amount: p.amount, merchant: p.kind === 'transfer' ? 'تحويل · ' + this.catAr(catId) : p.merchant, catId, dateShort: p.dateShort, src: 'sms', trip: this.tripIdNow(), cycle: st.cycle, ts: p.ts || Date.now(), last4: p.last4, seasonId: this.seasonPick(catId, seasonOv != null ? seasonOv : p.season) };
     if (p.userNote) tx.note = p.userNote;
     const txns = [tx].concat(st.txns);
-    this.setState({ pending: st.pending.filter((x) => x.id !== pid), txns, learned, accounts: this.balUpdated(st.accounts, p.last4, p.balance), expanded: null });
+    this.setState({ pending: st.pending.filter((x) => x.id !== pid), txns, learned, accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts), expanded: null });
     this.say('تمام، انضافت في ' + this.catAr(catId) + (tx.seasonId ? ' · من ميزانية ' + this.seasonName() : '') + extra);
     this.watchSpend(tx, txns);
   }
@@ -1365,7 +1372,7 @@ class Component extends DCLogic {
     if (!sug.length) return;
     let accounts = st.accounts;
     const newTx = sug.map((p) => {
-      accounts = this.balUpdated(accounts, p.last4, p.balance);
+      accounts = this.balUpdated(accounts, p.last4, p.balance, p.ts);
       return { id: p.id, amount: p.amount, merchant: p.merchant, catId: p.catId, dateShort: p.dateShort, src: 'sms', trip: this.tripIdNow(), cycle: st.cycle, ts: p.ts || Date.now(), last4: p.last4, seasonId: this.seasonPick(p.catId, p.season) };
     });
     const txns = newTx.concat(st.txns);
@@ -1378,8 +1385,8 @@ class Component extends DCLogic {
     const st = this.state;
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
-    let accounts = this.balUpdated(st.accounts, p.fromLast4, p.fromBal);
-    accounts = this.balUpdated(accounts, p.toLast4, p.toBal);
+    let accounts = this.balUpdated(st.accounts, p.fromLast4, p.fromBal, p.ts);
+    accounts = this.balUpdated(accounts, p.toLast4, p.toBal, p.ts);
     this.setState({ pending: st.pending.filter((x) => x.id !== pid), accounts });
     this.say('تحويل بين حساباتك، ما ينحسب مصروف. حدّثت الرصيدين');
   }
@@ -1396,7 +1403,7 @@ class Component extends DCLogic {
     const st = this.state;
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
-    this.setState({ pending: st.pending.filter((x) => x.id !== pid), income: st.income.concat([{ id: this.newId(), name: 'إيداع في ••' + (p.last4 || ''), amount: p.amount, once: true, ts: Date.now(), dateShort: p.dateShort || todayLabels().dateShort }]), accounts: this.balUpdated(st.accounts, p.last4, p.balance) });
+    this.setState({ pending: st.pending.filter((x) => x.id !== pid), income: st.income.concat([{ id: this.newId(), name: 'إيداع في ••' + (p.last4 || ''), amount: p.amount, once: true, ts: Date.now(), dateShort: p.dateShort || todayLabels().dateShort }]), accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts) });
     this.say('انضاف كدخل');
   }
   // تاريخ بداية الشهر المالي يتحدد من يوم نزول الراتب، ويتغير كل شهر حسب موعده
@@ -1435,7 +1442,7 @@ class Component extends DCLogic {
       pending: instItems.concat(st.pending.filter((x) => x.id !== o.pid)),
       cycles: st.cycles.concat([{ n: st.cycle, startLabel: st.cycleStartLabel, startTs: st.cycleStart, endTs: start, spent, leftover }]),
       cycle: st.cycle + 1, cycleStart: start, cycleStartLabel: label, cycleSalary: true,
-      income, accounts: o.last4 ? this.balUpdated(st.accounts, o.last4, o.balance) : st.accounts,
+      income, accounts: o.last4 ? this.balUpdated(st.accounts, o.last4, o.balance, o.ts) : st.accounts,
       savingsOffer: leftover > 0.0005 ? { amount: leftover, fromLast4: o.last4 } : null,
       reports: st.reports.concat([rep]), reportReady: repId
     });
@@ -2195,7 +2202,7 @@ class Component extends DCLogic {
     const st = this.state;
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
-    this.setState({ pending: st.pending.filter((x) => x.id !== pid), accounts: this.withCash(this.balUpdated(st.accounts, p.last4, p.balance), p.amount) });
+    this.setState({ pending: st.pending.filter((x) => x.id !== pid), accounts: this.withCash(this.balUpdated(st.accounts, p.last4, p.balance, p.ts), p.amount) });
     this.say('حطيت ' + fmt(p.amount) + ' ⃄ في محفظة النقد');
   }
   atmAsExpense(pid) {
@@ -2207,7 +2214,7 @@ class Component extends DCLogic {
     if (!p || !p.fixedMatch) return;
     const fm = p.fixedMatch;
     const tx = { ts: Date.now(), id: p.id, amount: p.amount, merchant: fm.name, catId: fm.kind === 'inst' ? 'inst' : 'fixed', dateShort: p.dateShort, src: 'sms', trip: false, cycle: st.cycle, ts: p.ts || Date.now(), last4: p.last4, fixedPaid: true };
-    const patch = { pending: st.pending.filter((x) => x.id !== pid), txns: [tx].concat(st.txns), accounts: this.balUpdated(st.accounts, p.last4, p.balance) };
+    const patch = { pending: st.pending.filter((x) => x.id !== pid), txns: [tx].concat(st.txns), accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts) };
     if (fm.kind === 'inst') patch.installments = st.installments.map((x) => {
       if (x.id !== fm.id) return x;
       const y = Object.assign({}, x, { paid: Math.min(x.total, x.paid + p.amount), lastPaid: Date.now() });
@@ -2222,14 +2229,14 @@ class Component extends DCLogic {
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
     const txns = st.txns.map((t) => (t.id === p.refundOf ? Object.assign({}, t, { origAmount: t.origAmount || t.amount, amount: Math.max(0, Math.round((t.amount - p.amount) * 1000) / 1000), refunded: Math.round(((t.refunded || 0) + p.amount) * 1000) / 1000 }) : t));
-    this.setState({ txns, pending: st.pending.filter((x) => x.id !== pid), accounts: this.balUpdated(st.accounts, p.last4, p.balance) });
+    this.setState({ txns, pending: st.pending.filter((x) => x.id !== pid), accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts) });
     this.say('رجعت لك ' + fmt(p.amount) + ' ⃄، ونقصتها من العملية الأصلية');
   }
   confirmDup(pid) {
     const st = this.state;
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
-    const patch = { pending: st.pending.filter((x) => x.id !== pid), accounts: this.balUpdated(st.accounts, p.last4, p.balance) };
+    const patch = { pending: st.pending.filter((x) => x.id !== pid), accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts) };
     if (p.dupKind === 'receipt') patch.txns = st.txns.map((t) => (t.id === p.dupOf ? Object.assign({}, t, { linked: true, receipt: true, last4: p.last4 }) : t));
     this.setState(patch);
     this.say(p.dupKind === 'receipt' ? 'ربطت الرسالة بالفاتورة، وما حسبتها مرتين' : 'شلت النسخة المكررة');
@@ -2252,7 +2259,7 @@ class Component extends DCLogic {
     } else {
       const p = m.item;
       const tx = { ts: Date.now(), id: p.id, amount: p.amount, merchant: p.merchant, catId: p.catId || 'grocery', dateShort: p.dateShort, src: 'sms', trip: this.tripIdNow(), cycle: st.cycle, ts: p.ts || Date.now(), last4: p.last4, receipt: true, seasonId: this.seasonPick(p.catId || 'grocery', this.state.mSeason) };
-      this.setState({ pending: st.pending.filter((x) => x.id !== p.id), txns: [tx].concat(st.txns), accounts: this.balUpdated(st.accounts, p.last4, p.balance), rStage: 'idle', screen: 'home', mSeason: null });
+      this.setState({ pending: st.pending.filter((x) => x.id !== p.id), txns: [tx].concat(st.txns), accounts: this.balUpdated(st.accounts, p.last4, p.balance, p.ts), rStage: 'idle', screen: 'home', mSeason: null });
     }
     this.say('ربطت الفاتورة بالعملية، وما حسبتها مرتين');
   }
@@ -2641,7 +2648,7 @@ class Component extends DCLogic {
     const oldL4 = a.last4;
     // الرصيد يتغير بس إذا عدّلته في الخانة. وإلا يبقى زي ما هو (عشان ما يرجع رصيد قديم بعد تحويل أو رسالة بنك)
     const patch = { name: f.name.trim() };
-    if (f.bal0 == null || f.bal !== f.bal0) patch.balance = Math.round(bal * 1000) / 1000;
+    if (f.bal0 == null || f.bal !== f.bal0) { patch.balance = Math.round(bal * 1000) / 1000; patch.balTs = Date.now(); }
     if (a.type !== 'cash') Object.assign(patch, { bank: f.bank.trim(), type: f.type, last4: f.last4 });
     const accounts = st.accounts.map((x) => (x.id === a.id ? Object.assign({}, x, patch) : x));
     // لو تغيرت الأرقام، العمليات القديمة تبقى مربوطة بالحساب
