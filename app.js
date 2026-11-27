@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.3';
-const APP_BUILD = '34';
+const APP_VERSION = '1.9.4';
+const APP_BUILD = '35';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -2121,7 +2121,7 @@ class Component extends DCLogic {
   openTx(id) {
     const t = this.state.txns.find((x) => x.id === id);
     if (!t) return;
-    this.setState({ modal: { type: 'tx' }, txEdit: { id, amount: String(t.amount), merchant: t.merchant, catId: t.catId, note: t.note || '', splits: t.splits ? t.splits.map((x) => ({ catId: x.catId, amount: String(x.amount) })) : null, confirmDel: false, seasonOn: !!t.seasonId } });
+    this.setState({ modal: { type: 'tx' }, txEdit: { id, amount: String(t.amount), merchant: t.merchant, catId: t.catId, note: t.note || '', splits: t.splits ? t.splits.map((x) => ({ catId: x.catId, amount: String(x.amount) })) : null, confirmDel: false, seasonOn: !!t.seasonId, tripId: t.trip || false, tripOrig: t.trip || false } });
   }
   setTxe(patch) { this.setState({ txEdit: Object.assign({}, this.state.txEdit, patch) }); }
   saveTx() {
@@ -2140,7 +2140,7 @@ class Component extends DCLogic {
     }
     const learned = Object.assign({}, st.learned);
     if (t.src === 'sms' && !splits && catId !== t.catId && CATS.some((c) => c.id === catId)) learned[t.merchant.split(' · ')[0].toLowerCase()] = catId;
-    this.setState({ txns: st.txns.map((x) => (x.id === e.id ? Object.assign({}, x, { amount, merchant: e.merchant.trim() || x.merchant, catId, note: e.note.trim(), splits, seasonId: e.seasonOn ? (x.seasonId || this.seasonId()) : null }) : x)), learned, modal: null, txEdit: null });
+    this.setState({ txns: st.txns.map((x) => (x.id === e.id ? Object.assign({}, x, { amount, merchant: e.merchant.trim() || x.merchant, catId, note: e.note.trim(), splits, seasonId: e.seasonOn ? (x.seasonId || this.seasonId()) : null, trip: e.tripId === undefined ? x.trip : e.tripId }) : x)), learned, modal: null, txEdit: null });
     this.say(splits ? 'انحفظت، ومقسّمة على ' + splits.length + ' فئات' : 'انحفظت. الفئة صارت: ' + this.catAr(catId));
   }
   deleteTx() {
@@ -3315,6 +3315,10 @@ class Component extends DCLogic {
         })),
         remain: Math.abs(diff) < 0.0015 ? 'مضبوط' : (diff > 0 ? 'باقي ' + fmt(diff) + ' ⃄ ما توزعت' : 'زايد ' + fmt(-diff) + ' ⃄ عن المبلغ'),
         remainC: Math.abs(diff) < 0.0015 ? '#23624D' : '#A85A2C',
+        hasTrip: !!(e.tripOrig || (st.trip && st.trip.active !== false)),
+        tripText: (() => { const tid = e.tripId || e.tripOrig || (st.trip && st.trip.id); const tr = (st.trip && st.trip.id === tid) ? st.trip : (st.trips || []).find((x) => x.id === tid); const nm = tr ? tr.dest : ''; return e.tripId ? 'ضمن رحلة ' + nm + ' · اضغط وتطلع من الرحلة' : 'مو من الرحلة · تنحسب مصروف عادي'; })(),
+        tripSw: { bg: e.tripId ? '#2D4A6B' : 'var(--off)', x2: knobX(!!e.tripId, 18), aria: e.tripId ? 'true' : 'false' },
+        tripToggle: () => { const ed = this.state.txEdit; this.setTxe({ tripId: ed.tripId ? false : (ed.tripOrig || (this.state.trip && this.state.trip.id) || false) }); },
         delLabel: e.confirmDel ? 'متأكد؟ اضغط مرة ثانية' : 'حذف العملية', delBg: e.confirmDel ? '#9C2F3D' : '#FBEFF0', delFg: e.confirmDel ? '#FFFFFF' : '#9C2F3D'
       };
     }
