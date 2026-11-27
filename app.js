@@ -658,8 +658,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.4';
-const APP_BUILD = '35';
+const APP_VERSION = '1.9.5';
+const APP_BUILD = '36';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1207,7 +1207,7 @@ class Component extends DCLogic {
     const open = this.state.pending.filter((x) => x.kind === 'inst').map((x) => x.instId);
     return this.state.installments
       .filter((x) => !x.dueDay && x.total - x.paid > 0.0005 && open.indexOf(x.id) === -1)
-      .map((x) => ({ id: this.newId(), kind: 'inst', instId: x.id, amount: Math.min(x.monthly, x.total - x.paid), merchant: x.name, dateShort }));
+      .map((x) => ({ id: this.newId(), kind: 'inst', instId: x.id, amount: Math.min(x.monthly, x.total - x.paid), merchant: x.name, dateShort, ts: Date.now() }));
   }
   passMonth() {
     const items = this.instPending(todayLabels().dateShort);
@@ -1722,6 +1722,18 @@ class Component extends DCLogic {
   componentDidUpdate(pp, ps) {
     try { if (ps.screen !== this.state.screen && this.scrollEl) this.scrollEl.scrollTop = 0; } catch (e) {}
     try { if (ps.txns !== this.state.txns && (this.state.subs || []).length) this.syncSubs(); } catch (e) {}
+    // تذكير القسط ينشال لحاله إذا القسط اكتمل أو انحذف أو تسدد هالشهر
+    try {
+      const st = this.state;
+      if (ps.installments !== st.installments || ps.txns !== st.txns || ps.pending !== st.pending) {
+        const stale = st.pending.filter((x) => x.kind === 'inst').filter((x) => {
+          const ins = st.installments.find((y) => y.id === x.instId);
+          if (!ins || ins.total - ins.paid <= 0.0005) return true;
+          return st.txns.some((t) => t.instId === ins.id && t.cycle === st.cycle && (t.ts || 0) >= (x.ts || 0));
+        });
+        if (stale.length) this.setState({ pending: st.pending.filter((x) => stale.indexOf(x) === -1) });
+      }
+    } catch (e) {}
     // خانة الرصيد في ملف الحساب تتحدث لما يتغير الرصيد (تحويل، رسالة بنك، تعديل) إذا ما كنت تكتب فيها
     try {
       const st = this.state, f = st.accForm;
