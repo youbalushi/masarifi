@@ -497,7 +497,8 @@ function parseSmsCore(text, learned) {
   // تحويل في رسالة وحدة: "debited from your A/C … and credited to your A/C …"
   const both = s.match(/debited from (?:your )?a\/c\s*([0-9X#*]+).*?credited to (your )?a\/c\s*([0-9X#*]+)/i);
   const toAcc = both ? { raw: both[3], own: !!both[2] } : null;
-  if (both) { kind = 'transfer'; note = 'تحويل من حسابك إلى ' + (both[2] ? 'حسابك ' : 'حساب ') + '••' + (both[3].match(/(\d+)$/) || ['', ''])[1].slice(-4); }
+  // هالرسالة تنحسب مصروف دايماً (فئة عائلة وتحويلات مقترحة، وتقدر تغيّرها)
+  if (both) { kind = 'purchase'; catId = (learned && learned['تحويل إلى حساب ••' + (both[3].match(/(\d+)$/) || ['', ''])[1].slice(-4)]) || 'family'; note = ''; }
   let msgTs = null;
   if (Y) { const dt = new Date(+Y, parseInt(M, 10) - 1, parseInt(D, 10), H ? +H : 12, Mi ? +Mi : 0).getTime(); if (dt > 0 && dt <= Date.now() + 3600000 && dt > Date.now() - 90 * 86400000) msgTs = dt; }
   return { ok: true, toAcc, msgTs, amount, cur, last4, method: card ? 'بطاقة الخصم المباشر' : (mb ? 'تطبيق mBanking' : (isCreditOnly ? 'إيداع' : '—')), merchant, dateLabel, dateShort, balance, kind, catId, note, foreign: country !== 'OM' || cur !== 'OMR', country, fromLearned, isSalary: /راتب|salary/i.test(s), accSavings: /saving/i.test(s), bank: detectBank(s, acc ? acc[1] : ''), ts: Y ? new Date(+Y, +M - 1, +D, H ? +H : 12, Mi ? +Mi : 0).getTime() : Date.now() };
@@ -664,8 +665,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '2.0.2';
-const APP_BUILD = '43';
+const APP_VERSION = '2.0.3';
+const APP_BUILD = '44';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1329,8 +1330,7 @@ class Component extends DCLogic {
       const tad = accDigitsOf('your A/C ' + p.toAcc.raw);
       toObj = tad ? accOfMsg(st.accounts, tad) : null;
       const t4 = tad ? (tad.tail.length >= 4 ? tad.tail.slice(-4) : tad.raw) : '';
-      item.merchant = 'تحويل إلى ' + (toObj ? accLabel(toObj) : (p.toAcc.own ? 'حسابك ••' : 'حساب ••') + t4); item.toLabel = true;
-      if (toObj && !item.dupKind) item = { id, kind: 'internal', single: true, toId: toObj.id, amount: p.amount, dateShort: p.dateShort, fromLast4: p.last4, toLast4: toObj.last4, ts: p.ts, debit: Object.assign({}, item) };
+      item.merchant = 'تحويل إلى حساب ••' + t4;
     }
     const isCredit = item.kind === 'credit';
     const isDebitTransfer = item.kind === 'transfer' && !p.toAcc;
@@ -3449,7 +3449,7 @@ class Component extends DCLogic {
     const payFromHint = st.mPay === 'cash' ? 'بينقص من محفظة النقد' : (payAcc ? 'بينربط بالحساب وينقص من رصيده. وإذا وصلت رسالة البنك بنفس المبلغ، بنبهك إنها نفس العملية' : 'ما بينربط بأي حساب');
     return {
       payFrom, payFromHint,
-      ignoredView, hasIgnored: ignoredView.length > 0,
+      ignoredView, hasIgnored: ignoredView.length > 0, ignOpen: !!st.ignOpen, ignAria: st.ignOpen ? 'true' : 'false', ignRot: st.ignOpen ? '180deg' : '0deg', ignCount: String(ignoredView.length), toggleIgn: () => this.setState({ ignOpen: !this.state.ignOpen }),
       seasonQ, addKinds, addIsInc: incK, addIsExp: !incK, addHead: incK ? 'أضف دخل' : (st.lang === 'en' ? 'Add expense' : 'أضف مصروف'), addSub: incK ? 'راتب، أو أي دخل ثاني لمرة وحدة' : 'ثلاث طرق، اختر اللي يريحك',
       isAccount: st.screen === 'account', av: this.buildAccView(catMap),
       rp: this.buildRp(catMap, tobj),
