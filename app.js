@@ -494,9 +494,13 @@ function parseSmsCore(text, learned) {
       if (!catId) { kind = 'unclear'; if (!note) note = 'ما عرفت نوع هذا المتجر، حدده مرة وأتذكره بعدين.'; }
     }
   }
+  // تحويل في رسالة وحدة: "debited from your A/C … and credited to your A/C …"
+  const both = s.match(/debited from (?:your )?a\/c\s*([0-9X#*]+).*?credited to (your )?a\/c\s*([0-9X#*]+)/i);
+  const toAcc = both ? { raw: both[3], own: !!both[2] } : null;
+  if (both) { kind = 'transfer'; note = 'تحويل من حسابك إلى ' + (both[2] ? 'حسابك ' : 'حساب ') + '••' + (both[3].match(/(\d+)$/) || ['', ''])[1].slice(-4); }
   let msgTs = null;
   if (Y) { const dt = new Date(+Y, parseInt(M, 10) - 1, parseInt(D, 10), H ? +H : 12, Mi ? +Mi : 0).getTime(); if (dt > 0 && dt <= Date.now() + 3600000 && dt > Date.now() - 90 * 86400000) msgTs = dt; }
-  return { ok: true, msgTs, amount, cur, last4, method: card ? 'بطاقة الخصم المباشر' : (mb ? 'تطبيق mBanking' : (isCreditOnly ? 'إيداع' : '—')), merchant, dateLabel, dateShort, balance, kind, catId, note, foreign: country !== 'OM' || cur !== 'OMR', country, fromLearned, isSalary: /راتب|salary/i.test(s), accSavings: /saving/i.test(s), bank: detectBank(s, acc ? acc[1] : ''), ts: Y ? new Date(+Y, +M - 1, +D, H ? +H : 12, Mi ? +Mi : 0).getTime() : Date.now() };
+  return { ok: true, toAcc, msgTs, amount, cur, last4, method: card ? 'بطاقة الخصم المباشر' : (mb ? 'تطبيق mBanking' : (isCreditOnly ? 'إيداع' : '—')), merchant, dateLabel, dateShort, balance, kind, catId, note, foreign: country !== 'OM' || cur !== 'OMR', country, fromLearned, isSalary: /راتب|salary/i.test(s), accSavings: /saving/i.test(s), bank: detectBank(s, acc ? acc[1] : ''), ts: Y ? new Date(+Y, +M - 1, +D, H ? +H : 12, Mi ? +Mi : 0).getTime() : Date.now() };
 }
 
 const RECEIPT = {
@@ -660,8 +664,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '2.0.0';
-const APP_BUILD = '41';
+const APP_VERSION = '2.0.1';
+const APP_BUILD = '42';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1320,8 +1324,16 @@ class Component extends DCLogic {
       if (fx) item.fixedMatch = { kind: 'fixed', id: fx.id, name: fx.name };
       else if (ins) item.fixedMatch = { kind: 'inst', id: ins.id, name: ins.name };
     }
+    let toObj = null;
+    if (p.toAcc) {
+      const tad = accDigitsOf('your A/C ' + p.toAcc.raw);
+      toObj = tad ? accOfMsg(st.accounts, tad) : null;
+      const t4 = tad ? (tad.tail.length >= 4 ? tad.tail.slice(-4) : tad.raw) : '';
+      item.merchant = 'تحويل إلى ' + (toObj ? accLabel(toObj) : (p.toAcc.own ? 'حسابك ••' : 'حساب ••') + t4);
+      if (toObj && !item.dupKind) item = { id, kind: 'internal', single: true, toId: toObj.id, amount: p.amount, dateShort: p.dateShort, fromLast4: p.last4, toLast4: toObj.last4, ts: p.ts, debit: Object.assign({}, item) };
+    }
     const isCredit = item.kind === 'credit';
-    const isDebitTransfer = item.kind === 'transfer';
+    const isDebitTransfer = item.kind === 'transfer' && !p.toAcc;
     if (isCredit || isDebitTransfer) {
       const mi = pending.findIndex((x) => Math.abs(x.amount - p.amount) < 0.0005 && x.last4 && p.last4 && x.last4 !== p.last4 && x.dateShort === p.dateShort && (isCredit ? x.kind === 'transfer' : x.kind === 'credit'));
       if (mi !== -1) {
@@ -1338,6 +1350,7 @@ class Component extends DCLogic {
       const sign = (p.kind === 'credit' || p.kind === 'refund') ? 1 : -1;
       this.setState({ accounts: this.moveBal(this.state.accounts, acc.id, sign * p.amount) });
       item.balRel = sign;
+      if (item.kind === 'internal' && item.single && toObj && toObj.id !== acc.id) this.setState({ accounts: this.moveBal(this.state.accounts, toObj.id, p.amount) });
     }
     const npend = [item].concat(pending);
     this.setState({ pending: npend, smsText: '', catPick: null });
@@ -1433,6 +1446,12 @@ class Component extends DCLogic {
     const p = st.pending.find((x) => x.id === pid);
     if (!p) return;
     const rest = st.pending.filter((x) => x.id !== pid);
+    if (p.single) {
+      // الرسالة وحدة: يبقى تحويل صادر بس، ونرجع اللي انضاف للحساب الثاني
+      this.setState({ pending: [Object.assign({}, p.debit, { id: this.newId(), kind: 'transfer' })].concat(rest), accounts: p.toId ? this.moveBal(st.accounts, p.toId, -p.amount) : st.accounts });
+      this.say('تمام، حطيته تحويل صادر، وحدد له فئة');
+      return;
+    }
     const back = [Object.assign({}, p.debit, { id: this.newId(), kind: 'transfer' }), Object.assign({}, p.credit, { id: this.newId(), kind: 'credit' })];
     this.setState({ pending: back.concat(rest) });
     this.say('تمام، فصلتهم: تحويل صادر وإيداع وارد');
