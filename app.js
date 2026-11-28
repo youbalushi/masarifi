@@ -664,8 +664,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '2.0.1';
-const APP_BUILD = '42';
+const APP_VERSION = '2.0.2';
+const APP_BUILD = '43';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -1329,7 +1329,7 @@ class Component extends DCLogic {
       const tad = accDigitsOf('your A/C ' + p.toAcc.raw);
       toObj = tad ? accOfMsg(st.accounts, tad) : null;
       const t4 = tad ? (tad.tail.length >= 4 ? tad.tail.slice(-4) : tad.raw) : '';
-      item.merchant = 'تحويل إلى ' + (toObj ? accLabel(toObj) : (p.toAcc.own ? 'حسابك ••' : 'حساب ••') + t4);
+      item.merchant = 'تحويل إلى ' + (toObj ? accLabel(toObj) : (p.toAcc.own ? 'حسابك ••' : 'حساب ••') + t4); item.toLabel = true;
       if (toObj && !item.dupKind) item = { id, kind: 'internal', single: true, toId: toObj.id, amount: p.amount, dateShort: p.dateShort, fromLast4: p.last4, toLast4: toObj.last4, ts: p.ts, debit: Object.assign({}, item) };
     }
     const isCredit = item.kind === 'credit';
@@ -1449,7 +1449,7 @@ class Component extends DCLogic {
     if (p.single) {
       // الرسالة وحدة: يبقى تحويل صادر بس، ونرجع اللي انضاف للحساب الثاني
       this.setState({ pending: [Object.assign({}, p.debit, { id: this.newId(), kind: 'transfer' })].concat(rest), accounts: p.toId ? this.moveBal(st.accounts, p.toId, -p.amount) : st.accounts });
-      this.say('تمام، حطيته تحويل صادر، وحدد له فئة');
+      this.say('تمام، اختر فئة المصروف');
       return;
     }
     const back = [Object.assign({}, p.debit, { id: this.newId(), kind: 'transfer' }), Object.assign({}, p.credit, { id: this.newId(), kind: 'credit' })];
@@ -2916,11 +2916,22 @@ class Component extends DCLogic {
         sub = 'غير واضح من الرسالة · ' + d;
         question = p.note + ' وش نوعه؟';
         showChips = true; A('تعديل', () => this.openPendEdit(p.id)); A('تجاهل', ign);
+      } else if (k === 'transfer' && p.toLabel) {
+        title = p.merchant; sub = 'من حسابك ••' + p.last4 + ' · ' + d;
+        question = 'تحويل بين حساباتك ولا مصروف؟ إذا مصروف، اختر فئته من تحت. والرصيد انخصم في الحالتين.'; path = ICONS.swap; showChips = true;
+        A('تحويل · مو مصروف', () => this.dismiss(p.id, 'تمام، تحويل بين حساباتك وما يدخل المصاريف'), true);
+        A('تجاهل', ign);
       } else if (k === 'transfer') {
         title = 'تحويل من حسابك ••' + p.last4; sub = 'عبر mBanking · ' + d;
         question = 'هالتحويل حق إيش؟'; path = ICONS.swap; showChips = true;
         A('تحويل لحسابي · مو مصروف', () => this.dismiss(p.id, 'تمام، تحويل داخلي وما يدخل المصاريف'));
         A('تجاهل', ign);
+      } else if (k === 'internal' && p.single) {
+        title = 'تحويل بين حساباتك'; sub = '••' + p.fromLast4 + ' ← ••' + p.toLast4 + ' · ' + d;
+        question = 'تحويل بين حساباتك ولا مصروف؟ الرصيدين تحدّثوا.';
+        path = ICONS.swap; tone = 'blue';
+        A('تحويل بين حساباتي', () => this.internalYes(p.id), true);
+        A('مصروف', () => this.internalNo(p.id));
       } else if (k === 'internal') {
         title = 'تحويل بين حساباتك'; sub = '••' + p.fromLast4 + ' ← ••' + p.toLast4 + ' · ' + d;
         question = 'وصلتني رسالتين بنفس المبلغ والوقت من حسابين لك، يعني غالباً تحويل داخلي وما يدخل المصاريف. أأكده؟';
