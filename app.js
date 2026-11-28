@@ -426,7 +426,9 @@ function parseSmsCore(text, learned) {
   let debit = /خصم|سحب|شراء|سداد|دفع|debited|debit card|purchase|spent|withdrawn|used for|used at|paid|payment|charged|transferred/i.test(s);
   const atm = /ATM|صراف|cash withdrawal|سحب نقد/i.test(s);
   const refund = /استرداد|مرتجع|refund|reversal|reversed/i.test(s);
-  const credit = /إيداع|ايداع|إضافة|اضافة|استلام|credited|deposited|received/i.test(s);
+  const credit = /إيداع|ايداع|إضافة|اضافة|استلام|استلمت|credited|deposited|received/i.test(s);
+  // "لقد استلمت … باستخدام خدمات الدفع": كلمة الدفع هنا مو خصم
+  if (credit && /لقد استلمت|تم استلام|تم إيداع|تم ايداع|credited|deposited|received/i.test(s) && !/تم خصم|خصم من|debited|used for|used at|purchase|withdrawn|سحب/i.test(s)) debit = false;
   const am = s.match(/(?:(OMR|RO|R\.O\.?|ر\.ع\.?|USD|EUR|AED|TRY|GBP|THB|SAR)\s*([\d,]+(?:\.\d+)?))|(?:([\d,]+(?:\.\d+)?)\s*(OMR|RO|R\.O\.?|ر\.ع\.?|ريال|USD|EUR|AED|TRY|GBP|THB|SAR))/);
   if (!am) return { ok: false };
   // رسالة بنك فيها مبلغ بس ما فهمت نوعها: نعتبرها خصم ونخليك تراجعها بدل ما تضيع
@@ -473,7 +475,7 @@ function parseSmsCore(text, learned) {
     dateShort = parseInt(D, 10) + ' ' + mo;
     dateLabel = dateShort + ' ' + Y + (H ? ' · ' + H + ':' + Mi : '');
   }
-  const bm = s.match(/رصيدك الحالي(?: في الحساب)? هو\s*([\d,]+(?:\.\d+)?)/) || s.match(/الرصيد(?: المتاح| الحالي)?\s*:?\s*(?:OMR|ر\.ع\.?)?\s*([\d,]+(?:\.\d+)?)/) || s.match(/(?:balance|avl\.?\s*bal\.?|avail(?:able)?\.?\s*bal\.?)(?:\s+is)?\s*:?\s*(?:OMR\s*)?([\d,]+(?:\.\d+)?)/i);
+  const bm = s.match(/رصيدك الحالي(?: في الحساب)? هو\s*(?:OMR|ر\.ع\.?)?\s*([\d,]+(?:\.\d+)?)/) || s.match(/الرصيد(?: المتاح| الحالي)?\s*:?\s*(?:OMR|ر\.ع\.?)?\s*([\d,]+(?:\.\d+)?)/) || s.match(/(?:balance|avl\.?\s*bal\.?|avail(?:able)?\.?\s*bal\.?)(?:\s+is)?\s*:?\s*(?:OMR\s*)?([\d,]+(?:\.\d+)?)/i);
   const balance = bm ? parseFloat(bm[1].replace(/,/g, '')) : null;
   const cityAr = city ? (OM_CITIES[city.toUpperCase()] || prettyName(city)) : '';
   const rm = refund ? (s.match(/(?:استرداد|مرتجع) من\s+(.+?)\s+بتاريخ/) || s.match(/refund(?:ed)?\s+(?:from|by)\s+(.+?)\s+on\s/i)) : null;
@@ -585,7 +587,7 @@ const PALETTE = [
   { color: '#5A4B38', bg: '#EEE8E0', label: 'بني' }, { color: '#4F5B56', bg: '#E8ECEA', label: 'رمادي' }
 ];
 const CAT_ICONS = ['cart', 'bowl', 'fuel', 'shield', 'bolt', 'bag', 'heart', 'car', 'users', 'home', 'gift', 'book', 'phone', 'game', 'card', 'dots'];
-const DATA_KEYS = ['profile', 'accounts', 'txns', 'pending', 'income', 'fixed', 'installments', 'learned', 'budgets', 'goals', 'cats', 'cycle', 'cycleStart', 'cycleStartLabel', 'cycleSalary', 'cycles', 'trip', 'lastTrip', 'shares', 'lang', 'notif', 'security', 'chat', 'perms', 'theme', 'mode', 'seasons', 'subsIgnored', 'subs', 'moves', 'reports', 'trips', 'demoIncome', 'ignoredAccs'];
+const DATA_KEYS = ['profile', 'ledger', 'accounts', 'txns', 'pending', 'income', 'fixed', 'installments', 'learned', 'budgets', 'goals', 'cats', 'cycle', 'cycleStart', 'cycleStartLabel', 'cycleSalary', 'cycles', 'trip', 'lastTrip', 'shares', 'lang', 'notif', 'security', 'chat', 'perms', 'theme', 'mode', 'seasons', 'subsIgnored', 'subs', 'moves', 'reports', 'trips', 'demoIncome', 'ignoredAccs'];
 const THEMES = [
   { k: 'green', label: 'أخضر', color: '#1F5E4F' }, { k: 'blue', label: 'أزرق', color: '#24497A' },
   { k: 'purple', label: 'بنفسجي', color: '#4E3F86' }, { k: 'maroon', label: 'عنابي', color: '#7A2E3B' },
@@ -658,8 +660,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.8';
-const APP_BUILD = '39';
+const APP_VERSION = '1.9.9';
+const APP_BUILD = '40';
 
 function makeInitialState() {
   const now0 = new Date();
@@ -675,7 +677,7 @@ function makeInitialState() {
     cycle: 1, cycleStart: new Date(now0.getFullYear(), now0.getMonth(), 1).getTime(), cycleStartLabel: '1 ' + AR_M[now0.getMonth()], cycleSalary: false, cycles: [],
     chat: [{ role: 'assistant', text: 'هلا، أنا مستشارك المالي.\nأتابع أرصدتك ومصاريفك وأقساطك، وأنبهك من نفسي إذا شفت شي يضر ميزانيتك.\nاسألني أي شي: أرتب لك ميزانية، أو أسوي لك خطة للتخلص من الديون، أو أوريك وين تقدر توفر.' }],
     chatInput: '', chatBusy: false, unread: 0, nudge: '', expanded: null, savingsOffer: null, aiReady: false,
-    heads: null, shadeOpen: false, advNotes: [], budgets: {}, goals: [], gf: null, gAmt: '', goalAsk: null, goalLogAsk: null,
+    heads: null, shadeOpen: false, advNotes: [], budgets: {}, ledger: {}, goals: [], gf: null, gAmt: '', goalAsk: null, goalLogAsk: null,
     profile: { name: '', email: '' }, pf: { name: '', email: '' }, lang: 'ar',
     cats: DEFAULT_CATS.map((c) => Object.assign({}, c)),
     notif: { sms: true, advisor: true, inst: true },
@@ -832,6 +834,35 @@ class Component extends DCLogic {
   instTx(x, amount, when, early) {
     const d = new Date(when);
     return { id: this.newId(), ts: when, amount, merchant: x.name, catId: 'inst', dateShort: d.getDate() + ' ' + AR_M[d.getMonth()], src: 'inst', instId: x.id, trip: false, cycle: this.state.cycle, fixedPaid: true, note: early ? 'تسديد قبل الموعد' : 'خصم تلقائي في تاريخ الاستحقاق' };
+  }
+  // سجل حركة الرصيد: مع كل تغير في رصيد حساب نحفظ السبب والرصيد بعده
+  recordLedger(ps) {
+    const st = this.state;
+    if (!ps.accounts || !ps.accounts.length) return;
+    const led = Object.assign({}, st.ledger || {});
+    let changed = false;
+    const newP = st.pending.filter((x) => !(ps.pending || []).some((q) => q.id === x.id));
+    const newT = st.txns.filter((x) => !(ps.txns || []).some((q) => q.id === x.id));
+    const newM = (st.moves || []).filter((x) => !(ps.moves || []).some((q) => q.id === x.id));
+    st.accounts.forEach((a) => {
+      const pa = ps.accounts.find((x) => x.id === a.id);
+      if (!pa || Math.abs((pa.balance || 0) - (a.balance || 0)) < 0.0005) return;
+      const hit = (l4) => !!l4 && !!a.last4 && accMatch(a, l4);
+      let e = { label: 'تحديث الرصيد' };
+      const p = newP.find((x) => hit(x.last4) || hit(x.fromLast4) || hit(x.toLast4));
+      const m = newM.find((x) => x.from === a.id || x.to === a.id);
+      const t = newT.find((x) => x.accId === a.id || hit(x.last4) || (a.type === 'cash' && x.cash));
+      if (p) e = { label: p.merchant || (p.kind === 'credit' || p.kind === 'salary' ? 'إيداع' : 'عملية بنك'), ref: p.id, date: p.dateShort };
+      else if (m) { const o = st.accounts.find((x) => x.id === (m.from === a.id ? m.to : m.from)); e = { label: (m.from === a.id ? 'تحويل إلى ' : 'تحويل من ') + (o ? accLabel(o) : 'حساب'), ref: 'm' + m.id, move: true, date: m.dateShort }; }
+      else if (t) e = { label: t.merchant, ref: t.id, date: t.dateShort };
+      else if ((a.adjLog || []).length > (pa.adjLog || []).length || (a.balTs && a.balTs !== pa.balTs && !p)) e = { label: 'تعديل الرصيد', adj: true };
+      else if ((ps.moves || []).length > (st.moves || []).length) e = { label: 'إلغاء تحويل', move: true };
+      else if ((ps.txns || []).length > st.txns.length) e = { label: 'رجوع مبلغ دفعة محذوفة' };
+      const d = new Date();
+      led[a.id] = [Object.assign({ id: this.newId(), at: Date.now(), delta: Math.round((a.balance - (pa.balance || 0)) * 1000) / 1000, bal: a.balance, date: d.getDate() + ' ' + AR_M[d.getMonth()] }, e, e.date ? {} : { date: d.getDate() + ' ' + AR_M[d.getMonth()] })].concat(led[a.id] || []).slice(0, 300);
+      changed = true;
+    });
+    if (changed) this.setState({ ledger: led });
   }
   cleanInstPending() {
     const st = this.state;
@@ -1748,6 +1779,7 @@ class Component extends DCLogic {
     try { if (ps.txns !== this.state.txns && (this.state.subs || []).length) this.syncSubs(); } catch (e) {}
     // تذكير القسط ينشال لحاله إذا القسط اكتمل أو انحذف أو تسدد هالشهر
     try { if (ps.installments !== this.state.installments || ps.txns !== this.state.txns || ps.pending !== this.state.pending) this.cleanInstPending(); } catch (e) {}
+    try { if (ps.accounts !== this.state.accounts && ps.ledger === this.state.ledger) this.recordLedger(ps); } catch (e) {}
     // خانة الرصيد في ملف الحساب تتحدث لما يتغير الرصيد (تحويل، رسالة بنك، تعديل) إذا ما كنت تكتب فيها
     try {
       const st = this.state, f = st.accForm;
@@ -2710,11 +2742,27 @@ class Component extends DCLogic {
         { label: 'عمليات هالشهر', value: String(cyc.length) },
         { label: 'آخر عملية', value: last ? (last.dateShort || '—') : '—' }
       ],
-      hasTx: all.length > 0, noTx: all.length === 0 && !(st.moves || []).some((m) => m.from === a.id || m.to === a.id), txCount: all.length,
+      hasTx: all.length > 0, noTx: all.length === 0 && !(st.moves || []).some((m) => m.from === a.id || m.to === a.id) && !((st.ledger || {})[a.id] || []).length, txCount: all.length,
       emptyText: isCash ? 'ما فيه مصاريف كاش للحين. لما تسجل مصروف وتختار "دفعتها كاش" يطلع هنا.' : 'ما فيه عمليات مربوطة بهالحساب للحين. العمليات تنربط من رسائل البنك اللي فيها هالأرقام (' + (a.last4 || '—') + ').',
-      rows: all.map((t) => ({ k: 't', t, ts: t.ts || 0 })).concat((st.moves || []).filter((m) => m.from === a.id || m.to === a.id).map((m) => ({ k: 'm', m, ts: m.ts }))).sort((x, y) => y.ts - x.ts).slice(0, 8).map((r, i) => {
-        if (r.k === 'm') { const m = r.m, out = m.from === a.id, o = st.accounts.find((x) => x.id === (out ? m.to : m.from)); return { merchant: (out ? 'تحويل إلى ' : 'تحويل من ') + (o ? accLabel(o) : 'حساب محذوف'), ar: m.note || 'تحويل بين حساباتك', color: '#2D4A6B', bg: '#E3E9F3', path: ICONS.repeat, amt: (out ? '-' : '+') + fmt(m.amount), date: m.dateShort || '', delay: i * 40, open: () => this.setState({ modal: { type: 'move', id: m.id } }) }; }
-        const t = r.t, c = catMap[t.catId] || catMap.other; return { merchant: t.merchant, ar: c.ar + (t.trip ? ' · رحلة' : ''), color: c.color, bg: c.bg, path: ICONS[c.ic], amt: fmt(t.amount), date: t.dateShort || '', delay: i * 40, open: () => this.openTx(t.id) }; }),
+      rows: (() => {
+        const L = (st.ledger || {})[a.id] || [];
+        const refs = {}; L.forEach((e) => { if (e.ref != null) refs[e.ref] = true; });
+        return L.map((e) => ({ k: 'l', e, ts: e.at || 0 }))
+          .concat(all.filter((t) => !refs[t.id]).map((t) => ({ k: 't', t, ts: t.ts || 0 })))
+          .concat((st.moves || []).filter((m) => (m.from === a.id || m.to === a.id) && !refs['m' + m.id]).map((m) => ({ k: 'm', m, ts: m.ts })));
+      })().sort((x, y) => y.ts - x.ts).slice(0, 10).map((r, i) => {
+        if (r.k === 'l') {
+          const e = r.e, t = e.ref != null ? st.txns.find((x) => x.id === e.ref) : null, pend = e.ref != null ? st.pending.find((x) => x.id === e.ref) : null;
+          const c = t ? (catMap[t.catId] || catMap.other) : null, up = (isCard ? -e.delta : e.delta) > 0;
+          const mv = e.move ? (st.moves || []).find((x) => 'm' + x.id === e.ref) : null;
+          return { merchant: t ? t.merchant : e.label, ar: t ? c.ar + (t.trip ? ' · رحلة' : '') : (pend ? 'بانتظار موافقتك' : (e.move ? 'تحويل بين حساباتك' : (e.adj ? 'عدّلته بيدك' : (e.ref != null ? 'ما انسجلت كعملية' : 'تغير الرصيد')))),
+            color: t ? c.color : (up ? '#23624D' : (e.move ? '#2D4A6B' : '#8A6A2A')), bg: t ? c.bg : (up ? '#E3F0EA' : (e.move ? '#E3E9F3' : '#F6EEDC')), path: t ? ICONS[c.ic] : (e.move ? ICONS.repeat : (up ? ICONS.piggy : ICONS.question)),
+            amt: (up ? '+' : '-') + fmt(Math.abs(e.delta)), amtC: up ? '#23624D' : 'var(--ink)', date: e.date || '', hasBal: true, bal: fmt(e.bal), delay: i * 40,
+            open: () => { if (t) this.openTx(t.id); else if (mv) this.setState({ modal: { type: 'move', id: mv.id } }); } };
+        }
+        if (r.k === 'm') { const m = r.m, out = m.from === a.id, o = st.accounts.find((x) => x.id === (out ? m.to : m.from)); return { merchant: (out ? 'تحويل إلى ' : 'تحويل من ') + (o ? accLabel(o) : 'حساب محذوف'), ar: m.note || 'تحويل بين حساباتك', color: '#2D4A6B', bg: '#E3E9F3', path: ICONS.repeat, amt: (out ? '-' : '+') + fmt(m.amount), amtC: out ? 'var(--ink)' : '#23624D', date: m.dateShort || '', hasBal: false, bal: '', delay: i * 40, open: () => this.setState({ modal: { type: 'move', id: m.id } }) }; }
+        const t = r.t, c = catMap[t.catId] || catMap.other; return { merchant: t.merchant, ar: c.ar + (t.trip ? ' · رحلة' : ''), color: c.color, bg: c.bg, path: ICONS[c.ic], amt: '-' + fmt(t.amount), amtC: 'var(--ink)', date: t.dateShort || '', hasBal: false, bal: '', delay: i * 40, open: () => this.openTx(t.id) }; }),
+      hasLedger: ((st.ledger || {})[a.id] || []).length > 0,
       allTx: () => this.setState({ screen: 'txlist', txBack: 'account', txFilter: { q: '', cat: null, acc: isCash ? 'cash' : a.last4, period: 'all' }, budInput: '' }),
       hasCats: catKeys.length > 0,
       cats: catKeys.slice(0, 5).map((k) => { const c = catMap[k] || catMap.other; const p = cycSum > 0 ? byCat[k] / cycSum * 100 : 0; return { ar: c.ar, color: c.color, amt: fmt(byCat[k]), pct: Math.round(p), w: Math.max(3, p).toFixed(1) }; }),
