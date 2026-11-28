@@ -660,8 +660,8 @@ function signLeft(v) {
   return v;
 }
 const SEASON_OFF = { health: 1, bills: 1, fuel: 1, gov: 1, subs: 1, fixed: 1, inst: 1, transport: 1 };
-const APP_VERSION = '1.9.9';
-const APP_BUILD = '40';
+const APP_VERSION = '2.0.0';
+const APP_BUILD = '41';
 
 function makeInitialState() {
   const now0 = new Date();
